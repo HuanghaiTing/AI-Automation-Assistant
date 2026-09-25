@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Automation Assistant</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+            font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+            font-size: 14px;
+            color: #fff;
+            overflow: hidden;
+            background: #202020;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            background: #202020;
+            border: 1px solid #333;
+            border-radius: 8px;
+        }
+
+        .titlebar {
+            height: 32px;
+            display: flex;
+            align-items: center;
+            padding-left: 12px;
+            user-select: none;
+            flex-shrink: 0;
+        }
+
+            .titlebar .app-title {
+                font-size: 12px;
+                color: #c8c8c8;
+                pointer-events: none;
+            }
+
+            .titlebar .spacer {
+                flex: 1;
+                pointer-events: none;
+            }
+
+        .win-btns {
+            display: flex;
+            height: 32px;
+        }
+
+        .win-btn {
+            width: 46px;
+            height: 32px;
+            border: none;
+            background: transparent;
+            color: #c8c8c8;
+            font-family: "Segoe MDL2 Assets", "Segoe Fluent Icons", sans-serif;
+            font-size: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background .1s;
+        }
+
+            .win-btn:hover {
+                background: rgba(255,255,255,0.06);
+            }
+
+            .win-btn.close:hover {
+                background: #c42b1c;
+                color: #fff;
+            }
+
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1.1fr 1fr;
+            gap: 8px;
+            padding: 4px 12px 12px;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        .col {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        .card {
+            background: #2d2d2d;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+            .card.grow {
+                flex: 1;
+            }
+
+        textarea {
+            width: 100%;
+            height: 60px;
+            resize: none;
+            background: #1f1f1f;
+            border: 1px solid #3a3a3a;
+            border-bottom: 1px solid #5a5a5a;
+            border-radius: 8px;
+            color: #fff;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-family: inherit;
+            outline: none;
+        }
+
+            textarea:focus {
+                background: #1a1a1a;
+                border-bottom: 2px solid #60cdff;
+                padding-bottom: 9px;
+            }
+
+            textarea::placeholder {
+                color: #909090;
+            }
+
+        .attachments {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+            align-items: center;
+            min-height: 0;
+        }
+
+        .attach-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .attach-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px 3px 10px;
+            background: #333;
+            border: 1px solid #444;
+            border-radius: 12px;
+            font-size: 11px;
+            color: #c8c8c8;
+            max-width: 220px;
+        }
+
+            .attach-chip .name {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .attach-chip .x {
+                cursor: pointer;
+                color: #888;
+                font-size: 12px;
+                padding: 0 2px;
+                user-select: none;
+            }
+
+                .attach-chip .x:hover {
+                    color: #ff6b6b;
+                }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        button.btn {
+            padding: 6px 16px;
+            font-size: 13px;
+            border-radius: 8px;
+            border: 1px solid #3a3a3a;
+            background: #2a2a2a;
+            color: #fff;
+            cursor: pointer;
+            font-family: inherit;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+            button.btn:hover:not(:disabled) {
+                background: #333;
+                border-color: #4a4a4a;
+            }
+
+            button.btn:disabled {
+                opacity: .4;
+                cursor: not-allowed;
+            }
+
+            button.btn.primary {
+                background: #60cdff;
+                color: #000;
+                border-color: transparent;
+                font-weight: 600;
+            }
+
+                button.btn.primary:hover:not(:disabled) {
+                    background: #7ad7ff;
+                }
+
+            button.btn.danger {
+                background: transparent;
+                border-color: #5a2a2a;
+                color: #ff6b6b;
+            }
+
+                button.btn.danger:hover:not(:disabled) {
+                    background: rgba(255,107,107,0.1);
+                }
+
+        .progress {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .progress-bar {
+            flex: 1;
+            height: 3px;
+            background: #1f1f1f;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: #60cdff;
+            transition: width .3s;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: #909090;
+            min-width: 68px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .section-title {
+            font-size: 12px;
+            color: #909090;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .log {
+            flex: 1;
+            overflow-y: auto;
+            background: #181818;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-family: "Cascadia Code", "Consolas", monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            min-height: 0;
+        }
+
+            .log::-webkit-scrollbar {
+                width: 6px;
+            }
+
+            .log::-webkit-scrollbar-thumb {
+                background: #3a3a3a;
+                border-radius: 3px;
+            }
+
+        .log-line {
+            margin-bottom: 1px;
+            word-break: break-all;
+        }
+
+            .log-line .ts {
+                color: #5a5a5a;
+                margin-right: 6px;
+            }
+
+            .log-line.info .msg {
+                color: #c8c8c8;
+            }
+
+            .log-line.exec .msg {
+                color: #60cdff;
+            }
+
+            .log-line.ai .msg {
+                color: #c586c0;
+            }
+
+            .log-line.uia .msg {
+                color: #dcdcaa;
+            }
+
+            .log-line.error .msg {
+                color: #ff6b6b;
+            }
+
+            .log-line.step .msg {
+                color: #6ccb5f;
+                font-weight: 600;
+            }
+
+        .preview {
+            flex: 1;
+            background: #181818;
+            border: 1px solid #333;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+            min-height: 0;
+        }
+
+            .preview img {
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
+                display: block;
+            }
+
+            .preview .ph {
+                color: #909090;
+                font-size: 12px;
+            }
+
+        .statusbar {
+            height: 30px;
+            padding: 0 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #909090;
+            border-top: 1px solid #333;
+            flex-shrink: 0;
+        }
+
+        .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #909090;
+        }
+
+            .dot.running {
+                background: #60cdff;
+                animation: pulse 1.5s infinite;
+            }
+
+            .dot.done {
+                background: #6ccb5f;
+            }
+
+            .dot.error {
+                background: #ff6b6b;
+            }
+
+        @keyframes pulse {
+            0%,100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: .4
+            }
+        }
+
+        .statusbar .spacer {
+            flex: 1;
+        }
+
+        .statusbar .model {
+            color: #5a5a5a;
+            font-family: "Cascadia Code", monospace;
+        }
+
+        .modal-mask {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+        }
+
+        .modal {
+            background: #2d2d2d;
+            border: 1px solid #3a3a3a;
+            border-radius: 12px;
+            padding: 20px 24px;
+            max-width: 440px;
+        }
+
+            .modal h3 {
+                font-size: 15px;
+                font-weight: 600;
+                margin-bottom: 10px;
+                color: #ff6b6b;
+            }
+
+            .modal p {
+                font-size: 13px;
+                line-height: 1.55;
+                color: #c8c8c8;
+                margin-bottom: 12px;
+            }
+
+            .modal .actions {
+                display: flex;
+                justify-content: flex-end;
+                margin-top: 16px;
+            }
+
+            .modal button {
+                padding: 6px 20px;
+                background: #60cdff;
+                color: #000;
+                border: none;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 600;
+                cursor: pointer;
+            }
+
+        .settings-mask {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.55);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .settings-panel {
+            background: #2d2d2d;
+            border: 1px solid #3a3a3a;
+            border-radius: 12px;
+            width: 480px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .settings-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid #3a3a3a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+            .settings-header h2 {
+                font-size: 15px;
+                font-weight: 600;
+            }
+
+        .settings-body {
+            padding: 16px 20px;
+            overflow-y: auto;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+            .form-group label {
+                display: block;
+                font-size: 12px;
+                color: #909090;
+                margin-bottom: 6px;
+            }
+
+            .form-group input, .form-group select {
+                width: 100%;
+                height: 34px;
+                background: #1f1f1f;
+                border: 1px solid #3a3a3a;
+                border-radius: 6px;
+                color: #fff;
+                padding: 0 10px;
+                font-size: 13px;
+                font-family: inherit;
+                outline: none;
+            }
+
+        .settings-footer {
+            padding: 12px 20px;
+            border-top: 1px solid #3a3a3a;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="titlebar" id="titlebar">
+        <span class="app-title">AI Automation Assistant</span>
+        <div class="spacer"></div>
+        <div class="win-btns">
+            <button class="win-btn" id="btnSettings" title="Settings">&#xE713;</button>
+            <button class="win-btn" id="btnMin" title="Minimize">&#xE921;</button>
+            <button class="win-btn" id="btnMax" title="Maximize">&#xE922;</button>
+            <button class="win-btn close" id="btnClose" title="Close">&#xE8BB;</button>
+        </div>
+    </div>
+
+    <main>
+        <div class="col">
+            <div class="card">
+                <textarea id="task" placeholder="描述任务，例如：打开记事本并保存（Ctrl+Enter 运行）"></textarea>
+                <div class="attachments" id="attachments">
+                    <div class="attach-list" id="attachList"></div>
+                </div>
+                <div class="row">
+                    <button class="btn primary" id="runBtn">▶ 运行</button>
+                    <button class="btn danger" id="stopBtn" disabled>■ 停止</button>
+                </div>
+                <div class="progress">
+                    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                    <div class="progress-text" id="progressText">0 / 12</div>
+                </div>
+            </div>
+
+            <div class="card grow">
+                <div class="section-title">
+                    <span>实时日志</span>
+                    <button class="btn" id="clearLog" style="padding:2px 10px;font-size:11px;">清空</button>
+                </div>
+                <div class="log" id="log"></div>
+            </div>
+        </div>
+
+        <div class="col">
+            <div class="card grow">
+                <div class="section-title"><span>屏幕预览</span></div>
+                <div class="preview" id="preview">
+                    <div class="ph">等待截图...</div>
+                    <img id="screenshot" alt="screenshot" style="display:none;">
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div class="statusbar">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">就绪</span>
+        <span class="spacer"></span>
+        <span class="model" id="modelText">-</span>
+    </div>
+
+    <div class="settings-mask" id="settingsMask" style="display:none;">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2>⚙️ 设置</h2>
+                <button class="win-btn close" id="settingsClose">&#xE8BB;</button>
+            </div>
+            <div class="settings-body">
+                <div class="form-group">
+                    <label>服务商</label>
+                    <select id="cfgProvider">
+                        <option value="qwen">通义千问 (Qwen)</option>
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="zhipu">智谱 GLM</option>
+                        <option value="moonshot">月之暗面 Kimi</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>API Key</label><input type="password" id="cfgApiKey" placeholder="sk-..."></div>
+                <div class="form-group"><label>Base URL</label><input type="text" id="cfgBaseUrl"></div>
+                <div class="form-group">
+                    <label>模型</label>
+                    <input type="text" id="cfgModel" list="modelList">
+                    <datalist id="modelList"></datalist>
+                </div>
+                <div class="form-group"><label>最大步数</label><input type="number" id="cfgMaxSteps" min="1" max="50" value="12"></div>
+            </div>
+            <div class="settings-footer">
+                <button class="btn" id="settingsCancel">取消</button>
+                <button class="btn primary" id="settingsSave">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        console.log("[UI] script started");
+
+        (function () {
+        "use strict";
+
+        console.log("[UI] IIFE entered");
+
+        const $ = id => document.getElementById(id);
+        const taskEl        = $("task");
+        const runBtn        = $("runBtn");
+        const stopBtn       = $("stopBtn");
+        const clearLogBtn   = $("clearLog");
+        const logEl         = $("log");
+        const statusDot     = $("statusDot");
+        const statusText    = $("statusText");
+        const progressFill  = $("progressFill");
+        const progressText  = $("progressText");
+        const screenshot    = $("screenshot");
+        const preview       = $("preview");
+        const modelText     = $("modelText");
+        const attachList    = $("attachList");
+
+        let taskTimer = null;
+        let lastActivity = 0;
+        let lastActivityTimer = null;
+        let attachedItems = [];
+
+        function send(obj) {
+        if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(JSON.stringify(obj));
+        } else {
+        console.warn("[UI] WebView2 not available");
+        }
+        }
+        function postWin(action) { send({ type: action }); }
+
+        // ========== 窗口控制 ==========
+        $("btnMin").addEventListener("click",   () => postWin("winMin"));
+        $("btnMax").addEventListener("click",   () => postWin("winMax"));
+        $("btnClose").addEventListener("click", () => postWin("winClose"));
+
+        const titlebarEl = $("titlebar");
+        let dragStartX = 0, dragStartY = 0, dragArmed = false;
+
+        titlebarEl.addEventListener("mousedown", (e) => {
+        if (e.target.closest(".win-btn")) return;
+        if (e.button !== 0) return;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        dragArmed = true;
+        });
+
+        document.addEventListener("mousemove", (e) => {
+        if (!dragArmed) return;
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        if (Math.abs(dx) + Math.abs(dy) > 5) {
+        dragArmed = false;
+        postWin("winDrag");
+        }
+        });
+
+        document.addEventListener("mouseup", () => { dragArmed = false; });
+
+        titlebarEl.addEventListener("dblclick", (e) => {
+        if (e.target.closest(".win-btn")) return;
+        postWin("winMax");
+        });
+
+        // ========== 日志 ==========
+        function appendLog(level, text) {
+        const div = document.createElement("div");
+        div.className = "log-line " + (level || "info");
+        const t = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        div.innerHTML = '<span class="ts">' + t + '</span><span class="msg"></span>';
+        div.querySelector(".msg").textContent = text;
+        logEl.appendChild(div);
+        while (logEl.childElementCount > 500) logEl.removeChild(logEl.firstChild);
+        logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function showScreenshot(b64) {
+        if (!b64) return;
+        screenshot.src = "data:image/png;base64," + b64;
+        screenshot.style.display = "block";
+        const ph = preview.querySelector(".ph");
+        if (ph) ph.style.display = "none";
+        }
+
+        function setStep(cur, total) {
+        progressFill.style.width = (total > 0 ? (cur / total * 100) : 0) + "%";
+        progressText.textContent = cur + " / " + total;
+        }
+
+        function setStatus(text, cls) {
+        statusText.textContent = text;
+        statusDot.className = "dot" + (cls ? " " + cls : "");
+        }
+
+        function setRunning(running) {
+        runBtn.disabled  = running;
+        stopBtn.disabled = !running;
+        taskEl.disabled  = running;
+        }
+
+        function clearAllTimers() {
+        if (taskTimer) { clearTimeout(taskTimer); taskTimer = null; }
+        if (lastActivityTimer) { clearInterval(lastActivityTimer); lastActivityTimer = null; }
+        }
+
+        function setDone(success, reason) {
+        try { clearAllTimers(); } catch (e) {}
+        runBtn.disabled  = false;
+        stopBtn.disabled = true;
+        taskEl.disabled  = false;
+        progressFill.style.width = "0%";
+        if (success) {
+        setStatus("✓ 完成", "done");
+        appendLog("step", "任务完成");
+        } else {
+        setStatus("✗ 失败: " + (reason || "unknown"), "error");
+        appendLog("error", "任务失败: " + (reason || "unknown"));
+        }
+        }
+
+        function showAIError(type, message) {
+        const old = document.querySelector(".modal-mask");
+        if (old) old.remove();
+        const mask = document.createElement("div");
+        mask.className = "modal-mask";
+        mask.innerHTML = `
+        <div class="modal">
+        <h3>⚠️ AI 调用失败</h3>
+        <p></p>
+        <div class="actions"><button id="modalClose">知道了</button></div>
+        </div>`;
+        mask.querySelector("p").textContent = message || "未知错误";
+        document.body.appendChild(mask);
+        mask.querySelector("#modalClose").addEventListener("click", () => mask.remove());
+        setStatus("✗ AI 调用失败", "error");
+        }
+
+        // ========== 附件 ==========
+        function onPickedItems(items) {
+        if (!Array.isArray(items)) return;
+        for (const it of items) {
+        if (attachedItems.some(x => x.path === it.path)) continue;
+        attachedItems.push(it);
+        }
+        renderAttachments();
+        syncAttachments();
+        }
+        function renderAttachments() {
+        attachList.innerHTML = "";
+        for (let i = 0; i < attachedItems.length; i++) {
+        const it = attachedItems[i];
+        const chip = document.createElement("div");
+        chip.className = "attach-chip";
+        const icon = it.type === "folder" ? "📁" : "📄";
+        chip.innerHTML = `<span>${icon}</span><span class="name"></span><span class="x">×</span>`;
+        chip.querySelector(".name").textContent = it.name;
+        chip.querySelector(".name").title = it.path;
+        chip.querySelector(".x").addEventListener("click", () => {
+        attachedItems.splice(i, 1);
+        renderAttachments();
+        syncAttachments();
+        });
+        attachList.appendChild(chip);
+        }
+        }
+        function syncAttachments() {
+        send({ type: "setAttachments", paths: attachedItems.map(x => x.path) });
+        }
+
+        // ========== 设置 ==========
+        const PROVIDERS = {
+        qwen: {
+        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        models: ["qwen-vl-max", "qwen-vl-plus"]
+        },
+        deepseek: {
+        base_url: "https://api.deepseek.com/v1/chat/completions",
+        models: ["deepseek-chat", "deepseek-vl"]
+        },
+        openai: {
+        base_url: "https://api.openai.com/v1/chat/completions",
+        models: ["gpt-4o", "gpt-4o-mini"]
+        },
+        zhipu: {
+        base_url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        models: ["glm-4v-plus", "glm-4v"]
+        },
+        moonshot: {
+        base_url: "https://api.moonshot.cn/v1/chat/completions",
+        models: ["moonshot-v1-8k-vision-preview"]
+        },
+        custom: { base_url: "", models: [] }
+        };
+
+        const settingsMask = $("settingsMask");
+        const cfgProvider  = $("cfgProvider");
+        const cfgApiKey    = $("cfgApiKey");
+        const cfgBaseUrl   = $("cfgBaseUrl");
+        const cfgModel     = $("cfgModel");
+        const cfgMaxSteps  = $("cfgMaxSteps");
+        const modelList    = $("modelList");
+
+        function updateModelList() {
+        const p = PROVIDERS[cfgProvider.value];
+        if (!p) return;
+        modelList.innerHTML = "";
+        p.models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        modelList.appendChild(opt);
+        });
+        if (p.base_url && cfgProvider.value !== "custom") cfgBaseUrl.value = p.base_url;
+        if (p.models.length && cfgProvider.value !== "custom") cfgModel.value = p.models[0];
+        }
+        cfgProvider.addEventListener("change", updateModelList);
+
+        function openSettings() {
+        send({ type: "getConfig" });
+        settingsMask.style.display = "flex";
+        }
+        function closeSettings() { settingsMask.style.display = "none"; }
+
+        $("btnSettings").addEventListener("click", openSettings);
+        $("settingsClose").addEventListener("click", closeSettings);
+        $("settingsCancel").addEventListener("click", closeSettings);
+        settingsMask.addEventListener("click", e => {
+        if (e.target === settingsMask) closeSettings();
+        });
+
+        $("settingsSave").addEventListener("click", () => {
+        if (!cfgBaseUrl.value.trim()) {
+        const p = PROVIDERS[cfgProvider.value];
+        if (p && p.base_url) cfgBaseUrl.value = p.base_url;
+        }
+        if (!cfgModel.value.trim()) {
+        const p = PROVIDERS[cfgProvider.value];
+        if (p && p.models.length) cfgModel.value = p.models[0];
+        }
+        send({
+        type: "saveConfig",
+        provider:  cfgProvider.value,
+        api_key:   cfgApiKey.value.trim(),
+        base_url:  cfgBaseUrl.value.trim(),
+        model:     cfgModel.value.trim(),
+        max_steps: parseInt(cfgMaxSteps.value) || 12
+        });
+        closeSettings();
+        if (cfgModel.value) modelText.textContent = cfgModel.value;
+        });
+
+        function onConfigLoaded(cfg) {
+        cfgProvider.value  = cfg.provider || "qwen";
+        cfgApiKey.value    = cfg.api_key  || "";
+        cfgMaxSteps.value  = cfg.max_steps || 12;
+        const p = PROVIDERS[cfgProvider.value];
+        if (p) {
+        modelList.innerHTML = "";
+        p.models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        modelList.appendChild(opt);
+        });
+        }
+        cfgBaseUrl.value = cfg.base_url || (p && p.base_url) || "";
+        cfgModel.value   = cfg.model    || (p && p.models[0]) || "";
+        if (cfgModel.value) modelText.textContent = cfgModel.value;
+        }
+
+        // ========== ★ 消息处理（关键修复）==========
+        // WebView2 的 e.data 可能是：
+        //   - 字符串（需要 JSON.parse）
+        //   - 已解析的对象（不能 JSON.parse）
+        function parseMessage(data) {
+        if (typeof data === "string") {
+        try { return JSON.parse(data); } catch (err) {
+        console.error("[UI] JSON parse error:", err, data);
+        return null;
+        }
+        }
+        return data;   // 已经是对象
+        }
+
+        if (window.chrome && window.chrome.webview) {
+        console.log("[UI] WebView2 bridge found, binding listener");
+        window.chrome.webview.addEventListener("message", e => {
+        const m = parseMessage(e.data);
+        if (!m) return;
+        console.log("[UI] message:", m);
+
+        lastActivity = Date.now();
+
+        try {
+        switch (m.type) {
+        case "log":         appendLog(m.level, m.text); break;
+        case "screenshot":  showScreenshot(m.b64); break;
+        case "step":        setStep(m.current, m.total); break;
+        case "done":        setDone(m.success, m.reason); break;
+        case "aiError":     showAIError(m.errType, m.message); break;
+        case "config":      onConfigLoaded(m); break;
+        case "pickedItems": onPickedItems(m.items); break;
+        }
+        } catch (err) {
+        console.error("[UI] handle error:", err);
+        }
+        });
+        } else {
+        console.warn("[UI] WebView2 not available (running in browser?)");
+        }
+
+        // ========== 运行 ==========
+        runBtn.addEventListener("click", () => {
+        const task = taskEl.value.trim();
+        if (!task) { taskEl.focus(); return; }
+
+        clearAllTimers();
+        logEl.innerHTML = "";
+        setRunning(true);
+        setStatus("运行中...", "running");
+        setStep(0, 12);
+        appendLog("info", "任务: " + task);
+        lastActivity = Date.now();
+
+        syncAttachments();
+        send({ type: "runTask", task });
+
+        taskTimer = setTimeout(() => {
+        if (runBtn.disabled) {
+        send({ type: "stop" });
+        clearAllTimers();
+        setRunning(false);
+        setStatus("✗ 超时", "error");
+        }
+        }, 60000);
+
+        lastActivityTimer = setInterval(() => {
+        if (!runBtn.disabled) {
+        clearInterval(lastActivityTimer);
+        lastActivityTimer = null;
+        return;
+        }
+        if (Date.now() - lastActivity > 20000) {
+        send({ type: "stop" });
+        clearAllTimers();
+        setRunning(false);
+        setStatus("已停止", "error");
+        }
+        }, 1000);
+        });
+
+        stopBtn.addEventListener("click", () => {
+        send({ type: "stop" });
+        setStatus("停止中...", "running");
+        setTimeout(() => {
+        if (runBtn.disabled) {
+        clearAllTimers();
+        setRunning(false);
+        setStatus("已停止", "error");
+        }
+        }, 2000);
+        });
+
+        clearLogBtn.addEventListener("click", () => { logEl.innerHTML = ""; });
+
+        taskEl.addEventListener("keydown", e => {
+        if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); runBtn.click(); }
+        });
+
+        // ========== 启动 ==========
+        setStatus("就绪");
+        appendLog("info", "Frontend ready / 前端就绪");
+
+        setTimeout(() => send({ type: "getConfig" }), 500);
+
+        console.log("[UI] init complete");
+        })();
+    </script>
+</body>
+</html>

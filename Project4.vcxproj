@@ -142,14 +142,22 @@
     <ClCompile Include="ai.cpp" />
     <ClCompile Include="apps.cpp" />
     <ClCompile Include="common.cpp" />
+    <ClCompile Include="config.cpp" />
+    <ClCompile Include="file_picker.cpp" />
+    <ClCompile Include="i18n.cpp" />
     <ClCompile Include="input.cpp" />
+    <ClCompile Include="logger.cpp" />
+    <ClCompile Include="log_tailer.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="ModernUI\App.xaml.cpp">
       <DependentUpon>ModernUI\App.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="notify.cpp" />
+    <ClCompile Include="prompt.cpp" />
     <ClCompile Include="system_ctrl.cpp" />
     <ClCompile Include="uia.cpp" />
     <ClCompile Include="vision.cpp" />
+    <ClCompile Include="webview_host.cpp" />
     <ClCompile Include="windows_util.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -157,20 +165,30 @@
     <ClInclude Include="ai.h" />
     <ClInclude Include="apps.h" />
     <ClInclude Include="common.h" />
+    <ClInclude Include="config.h" />
+    <ClInclude Include="file_picker.h" />
+    <ClInclude Include="i18n.h" />
     <ClInclude Include="input.h" />
+    <ClInclude Include="logger.h" />
+    <ClInclude Include="log_tailer.h" />
     <ClInclude Include="ModernUI\App.xaml.h">
       <DependentUpon>ModernUI\App.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="ModernUI\MainWindow.xaml.h">
       <DependentUpon>ModernUI\MainWindow.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="notify.h" />
     <ClInclude Include="pipe_server.h" />
+    <ClInclude Include="prompt.h" />
     <ClInclude Include="system_ctrl.h" />
     <ClInclude Include="uia.h" />
     <ClInclude Include="vision.h" />
+    <ClInclude Include="webview_host.h" />
     <ClInclude Include="windows_util.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="config.json" />
+    <None Include="index.html" />
     <None Include="ModernUI.Uwp\App.xaml.cs" />
     <None Include="ModernUI.Uwp\MainWindow.xaml.cs" />
     <None Include="ModernUI.Uwp\ModernUI.Uwp.csproj" />
@@ -178,6 +196,7 @@
     <None Include="ModernUI\MainWindow.xaml.cs" />
     <None Include="ModernUI\ModernUI.csproj" />
     <None Include="ocr.py" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <Page Include="ModernUI.Uwp\App.xaml" />
@@ -191,7 +210,19 @@
   <ItemGroup>
     <Manifest Include="ModernUI.Uwp\app.manifest" />
   </ItemGroup>
+  <ItemGroup>
+    <Font Include="..\HarmonyOS_Sans_Bold.ttf" />
+    <Font Include="..\HarmonyOS_Sans_Medium.ttf" />
+    <Font Include="..\HarmonyOS_Sans_Regular.ttf" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="packages\Microsoft.Web.WebView2.1.0.4191.47\build\native\Microsoft.Web.WebView2.targets" Condition="Exists('packages\Microsoft.Web.WebView2.1.0.4191.47\build\native\Microsoft.Web.WebView2.targets')" />
   </ImportGroup>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>这台计算机上缺少此项目引用的 NuGet 程序包。使用“NuGet 程序包还原”可下载这些程序包。有关更多信息，请参见 http://go.microsoft.com/fwlink/?LinkID=322105。缺少的文件是 {0}。</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('packages\Microsoft.Web.WebView2.1.0.4191.47\build\native\Microsoft.Web.WebView2.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\Microsoft.Web.WebView2.1.0.4191.47\build\native\Microsoft.Web.WebView2.targets'))" />
+  </Target>
 </Project>

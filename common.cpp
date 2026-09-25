@@ -1,10 +1,5 @@
 #include "common.h"
 
-const std::wstring API_HOST = L"dashscope.aliyuncs.com";
-const std::wstring API_PATH = L"/compatible-mode/v1/chat/completions";
-const std::string API_KEY = "sk-ws-H.PHMXIYR.WnUD.MEYCIQCo_JTKmDhrzvH5E6vJE569Z42X85hyx2987Riwx_tfZwIhAI458mCHr7tCe81MZvxdjNRe9GXRMCelyIJhtbbUlN7P";
-const std::string MODEL_VISION = "qwen-vl-max";
-
 std::string W2U(const std::wstring& wstr) {
     if (wstr.empty()) return "";
     int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -46,27 +41,25 @@ std::string CleanUTF8(const std::string& s) {
 }
 
 json SafeParseJSON(const std::string& raw) {
-    // ★ 空字符串保护
     if (raw.empty()) return json();
     std::string cleaned = CleanUTF8(raw);
     if (cleaned.empty()) return json();
     return json::parse(cleaned, nullptr, false);
 }
 
-// ★ 修复：用 sizeof 自动算数组长度，不再硬编码
 bool IsMultiStep(const std::string& input) {
     const char* separators[] = {
-        "\xEF\xBC\x8C",              // ，
-        "\xE7\x84\xB6\xE5\x90\x8E",  // 然后
-        "\xE5\x86\x8D",              // 再
-        "\xE8\xBE\x93\xE5\x85\xA5",  // 输入
-        "\xE7\x82\xB9\xE5\x87\xBB",  // 点击
-        "\xE5\xB9\xB6\xE4\xB8\x94",  // 并且
-        "\xE5\x92\x8C",              // 和
+        "\xEF\xBC\x8C",
+        "\xE7\x84\xB6\xE5\x90\x8E",
+        "\xE5\x86\x8D",
+        "\xE8\xBE\x93\xE5\x85\xA5",
+        "\xE7\x82\xB9\xE5\x87\xBB",
+        "\xE5\xB9\xB6\xE4\xB8\x94",
+        "\xE5\x92\x8C",
         " and ",
         " & ",
     };
-    const int count = sizeof(separators) / sizeof(separators[0]);   // ★ 自动算长度
+    const int count = sizeof(separators) / sizeof(separators[0]);
     for (int i = 0; i < count; i++) {
         if (input.find(separators[i]) != std::string::npos) return true;
     }

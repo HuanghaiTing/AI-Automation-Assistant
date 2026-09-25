@@ -1,0 +1,8 @@
+{
+  "api_key": "sk-ws-H.PIIMDLE.3Bvb.MEQCIGY2_lDSChL6nyoLB8bFKMFfbAvwV8zyl481jqWSmpDSAiA6rSq7DY7wWo01CuCco9DjTp13GD6i45dyVcZBRhQeig",
+  "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+  "language": "zh",
+  "max_steps": 12,
+  "model": "qwen-vl-max",
+  "provider": "qwen"
+}

@@ -1,49 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Դ�ļ�">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
-    </Filter>
-    <Filter Include="ͷ�ļ�">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
-    </Filter>
     <Filter Include="��Դ�ļ�">
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\Downloads\json.hpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClInclude>
     <ClInclude Include="common.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="windows_util.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="input.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="apps.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="uia.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="system_ctrl.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ai.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="vision.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="pipe_server.h">
-      <Filter>ͷ�ļ�</Filter>
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="logger.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="webview_host.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="config.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="notify.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="i18n.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="prompt.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="file_picker.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="log_tailer.h">
+      <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -54,34 +78,63 @@
     <None Include="ModernUI.Uwp\ModernUI.Uwp.csproj" />
     <None Include="ModernUI.Uwp\App.xaml.cs" />
     <None Include="ModernUI.Uwp\MainWindow.xaml.cs" />
+    <None Include="packages.config" />
+    <None Include="index.html">
+      <Filter>源文件</Filter>
+    </None>
+    <None Include="config.json" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="common.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="windows_util.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="input.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="apps.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="uia.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="system_ctrl.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="ai.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="vision.cpp">
-      <Filter>Դ�ļ�</Filter>
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="logger.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="webview_host.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="config.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="notify.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="i18n.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="prompt.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="file_picker.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="log_tailer.cpp">
+      <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -95,5 +148,16 @@
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="ModernUI.Uwp\app.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Font Include="..\HarmonyOS_Sans_Regular.ttf">
+      <Filter>源文件</Filter>
+    </Font>
+    <Font Include="..\HarmonyOS_Sans_Medium.ttf">
+      <Filter>源文件</Filter>
+    </Font>
+    <Font Include="..\HarmonyOS_Sans_Bold.ttf">
+      <Filter>源文件</Filter>
+    </Font>
   </ItemGroup>
 </Project>
