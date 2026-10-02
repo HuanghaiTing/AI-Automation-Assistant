@@ -1,11 +1,12 @@
 #include "logger.h"
 #include "webview_host.h"
 #include <iostream>
+#include <windows.h>
 
 BridgeCallbacks g_bridge;
 
 void Log(LogLevel lv, const std::string& msg) {
-    // 1. 控制台
+    // 1. 标签
     const char* tag = "";
     switch (lv) {
     case LogLevel::Info:  tag = "[INFO] ";  break;
@@ -15,9 +16,16 @@ void Log(LogLevel lv, const std::string& msg) {
     case LogLevel::Error: tag = "[ERROR] "; break;
     case LogLevel::Step:  tag = "[STEP] ";  break;
     }
+
+    // 2. 控制台（Debug 时可见；Release 时被 FreeConsole 静默丢弃）
     std::cout << tag << msg << std::endl;
 
-    // 2. 推给前端（走缓存，WebView2 未就绪也不丢）
+    // 3. VS 输出窗口（永远可见）
+    OutputDebugStringA(tag);
+    OutputDebugStringA(msg.c_str());
+    OutputDebugStringA("\n");
+
+    // 4. 前端（WebView2 未就绪时自动缓存）
     PushLogToFrontend(std::string(tag) + msg);
 }
 

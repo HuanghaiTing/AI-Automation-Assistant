@@ -4,11 +4,11 @@
 
 struct PromptContext {
     std::string task;
-    int step;
-    int maxSteps;
+    int step = 0;
+    int maxSteps = 0;
     std::vector<std::string> doneSteps;
     std::string openWindows;
-    std::string language;
+    std::string language = "zh";
     std::vector<std::string> attachedPaths;
 };
 

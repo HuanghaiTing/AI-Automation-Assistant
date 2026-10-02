@@ -153,6 +153,8 @@
       <DependentUpon>ModernUI\App.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="notify.cpp" />
+    <ClCompile Include="office_automation.cpp" />
+    <ClCompile Include="panel_host.cpp" />
     <ClCompile Include="prompt.cpp" />
     <ClCompile Include="system_ctrl.cpp" />
     <ClCompile Include="uia.cpp" />
@@ -178,8 +180,11 @@
       <DependentUpon>ModernUI\MainWindow.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="notify.h" />
+    <ClInclude Include="office_automation.h" />
+    <ClInclude Include="panel_host.h" />
     <ClInclude Include="pipe_server.h" />
     <ClInclude Include="prompt.h" />
+    <ClInclude Include="resource.h" />
     <ClInclude Include="system_ctrl.h" />
     <ClInclude Include="uia.h" />
     <ClInclude Include="vision.h" />
@@ -197,6 +202,7 @@
     <None Include="ModernUI\ModernUI.csproj" />
     <None Include="ocr.py" />
     <None Include="packages.config" />
+    <None Include="panel.html" />
   </ItemGroup>
   <ItemGroup>
     <Page Include="ModernUI.Uwp\App.xaml" />

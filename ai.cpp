@@ -4,51 +4,122 @@
 #include <winhttp.h>
 #include <gdiplus.h>
 #include <iostream>
+#include <new>
+#include <atomic>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "gdiplus.lib")
 
-// ========== Screenshot as base64 (with downscale) ==========
+// ★ 从 main.cpp 暴露
+extern bool IsStopRequested();
+
+// ★ 当前正在进行的请求 handle，用于中断
+static std::atomic<HINTERNET> g_currentRequest{ nullptr };
+
+void AbortCurrentAIRequest() {
+    HINTERNET h = g_currentRequest.exchange(nullptr);
+    if (h) {
+        std::cout << "[AI] AbortCurrentAIRequest: closing active handle" << std::endl;
+        WinHttpCloseHandle(h);
+    }
+}
+
+// ========== Screenshot ==========
+static int g_screenshotMaxW = 960;
+
 std::string CaptureScreenBase64() {
     int w = GetSystemMetrics(SM_CXSCREEN);
     int h = GetSystemMetrics(SM_CYSCREEN);
+    if (w <= 0 || h <= 0) return "";
 
     HDC hScreen = GetDC(nullptr);
+    if (!hScreen) return "";
     HDC hMem = CreateCompatibleDC(hScreen);
+    if (!hMem) { ReleaseDC(nullptr, hScreen); return ""; }
     HBITMAP hBmp = CreateCompatibleBitmap(hScreen, w, h);
-    SelectObject(hMem, hBmp);
+    if (!hBmp) { DeleteDC(hMem); ReleaseDC(nullptr, hScreen); return ""; }
+    HGDIOBJ hOld = SelectObject(hMem, hBmp);
     BitBlt(hMem, 0, 0, w, h, hScreen, 0, 0, SRCCOPY);
 
     Gdiplus::Bitmap bitmap(hBmp, nullptr);
 
-    // Downscale to max width 1280 to save tokens
-    const int MAX_W = 1280;
+    const int MAX_W = g_screenshotMaxW;
     Gdiplus::Bitmap* pSave = &bitmap;
     Gdiplus::Bitmap* pScaled = nullptr;
     if (w > MAX_W) {
         int newW = MAX_W;
         int newH = (int)(h * (double)MAX_W / w);
         pScaled = new Gdiplus::Bitmap(newW, newH, PixelFormat32bppARGB);
-        Gdiplus::Graphics g(pScaled);
-        g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-        g.DrawImage(&bitmap, 0, 0, newW, newH);
-        pSave = pScaled;
+        if (pScaled && pScaled->GetLastStatus() == Gdiplus::Ok) {
+            Gdiplus::Graphics g(pScaled);
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            g.DrawImage(&bitmap, 0, 0, newW, newH);
+            pSave = pScaled;
+        }
+        else {
+            if (pScaled) { delete pScaled; pScaled = nullptr; }
+            pSave = &bitmap;
+        }
     }
 
     IStream* pStream = nullptr;
-    CreateStreamOnHGlobal(nullptr, TRUE, &pStream);
+    HRESULT hrStream = CreateStreamOnHGlobal(nullptr, TRUE, &pStream);
+    if (FAILED(hrStream) || !pStream) {
+        if (pScaled) delete pScaled;
+        SelectObject(hMem, hOld); DeleteObject(hBmp);
+        DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+        return "";
+    }
 
     CLSID pngClsid;
-    CLSIDFromString(L"{557cf406-1a04-11d3-9a73-0000f81ef32e}", &pngClsid);
-    pSave->Save(pStream, &pngClsid, nullptr);
+    HRESULT hrClsid = CLSIDFromString(
+        const_cast<LPOLESTR>(L"{557cf406-1a04-11d3-9a73-0000f81ef32e}"), &pngClsid);
+    if (FAILED(hrClsid)) {
+        pStream->Release();
+        if (pScaled) delete pScaled;
+        SelectObject(hMem, hOld); DeleteObject(hBmp);
+        DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+        return "";
+    }
+
+    Gdiplus::Status saveStatus = pSave->Save(pStream, &pngClsid, nullptr);
+    if (saveStatus != Gdiplus::Ok) {
+        pStream->Release();
+        if (pScaled) delete pScaled;
+        SelectObject(hMem, hOld); DeleteObject(hBmp);
+        DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+        return "";
+    }
 
     STATSTG stat;
-    pStream->Stat(&stat, STATFLAG_NONAME);
+    HRESULT hrStat = pStream->Stat(&stat, STATFLAG_NONAME);
+    if (FAILED(hrStat) || stat.cbSize.LowPart == 0) {
+        pStream->Release();
+        if (pScaled) delete pScaled;
+        SelectObject(hMem, hOld); DeleteObject(hBmp);
+        DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+        return "";
+    }
     ULONG size = stat.cbSize.LowPart;
 
-    HGLOBAL hGlobal;
-    GetHGlobalFromStream(pStream, &hGlobal);
+    HGLOBAL hGlobal = nullptr;
+    HRESULT hrHg = GetHGlobalFromStream(pStream, &hGlobal);
+    if (FAILED(hrHg) || !hGlobal) {
+        pStream->Release();
+        if (pScaled) delete pScaled;
+        SelectObject(hMem, hOld); DeleteObject(hBmp);
+        DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+        return "";
+    }
+
     void* pData = GlobalLock(hGlobal);
+    if (!pData) {
+        pStream->Release();
+        if (pScaled) delete pScaled;
+        SelectObject(hMem, hOld); DeleteObject(hBmp);
+        DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+        return "";
+    }
 
     static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string result;
@@ -66,20 +137,32 @@ std::string CaptureScreenBase64() {
     GlobalUnlock(hGlobal);
     pStream->Release();
     if (pScaled) delete pScaled;
-    DeleteObject(hBmp);
-    DeleteDC(hMem);
-    ReleaseDC(nullptr, hScreen);
+    SelectObject(hMem, hOld); DeleteObject(hBmp);
+    DeleteDC(hMem); ReleaseDC(nullptr, hScreen);
+
+    std::cout << "[AI] Screenshot: " << w << "x" << h
+        << " png=" << size << " base64=" << result.size() << std::endl;
 
     return result;
 }
 
-// ========== Local helpers ==========
+// ========== Helpers ==========
 static std::wstring U2WLocal(const std::string& s) {
     if (s.empty()) return L"";
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (n <= 0) return L"";
     std::wstring w(n - 1, 0);
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
     return w;
+}
+
+static std::string W2ULocal(const std::wstring& w) {
+    if (w.empty()) return "";
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return "";
+    std::string s(n - 1, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], n, nullptr, nullptr);
+    return s;
 }
 
 static void ParseUrl(const std::string& url, std::wstring& host, std::wstring& path) {
@@ -96,12 +179,9 @@ static void ParseUrl(const std::string& url, std::wstring& host, std::wstring& p
 
 // ========== Call AI ==========
 std::string CallAIVision(const std::string& prompt, const std::string& imageBase64) {
-    if (g_config.api_key.empty()) {
-        return "ERROR: AUTH_FAILED";
-    }
-    if (g_config.base_url.empty()) {
-        return "ERROR: WinHttpConnect failed";
-    }
+    if (g_config.api_key.empty()) return "ERROR: AUTH_FAILED";
+    if (g_config.base_url.empty()) return "ERROR: WinHttpConnect failed";
+    if (imageBase64.empty()) return "ERROR: NO_IMAGE";
 
     std::wstring host, path;
     ParseUrl(g_config.base_url, host, path);
@@ -124,18 +204,21 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
 
     std::string body_str = body.dump();
 
+    std::cout << "[AI] === Request ===" << std::endl;
+    std::cout << "[AI] host=" << W2ULocal(host) << std::endl;
+    std::cout << "[AI] model=" << g_config.model << std::endl;
+    std::cout << "[AI] api_key_len=" << g_config.api_key.size() << std::endl;
+    std::cout << "[AI] prompt_len=" << prompt.size()
+        << " image_b64_len=" << imageBase64.size()
+        << " body_len=" << body_str.size() << std::endl;
+
     HINTERNET hSession = WinHttpOpen(L"AIAuto/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return "ERROR: WinHttpOpen failed";
 
-    // ★ Timeouts so the request can't hang forever
-    WinHttpSetTimeouts(hSession,
-        5000,    // resolve
-        5000,    // connect
-        10000,   // send
-        30000    // receive (30s max)
-    );
+    // ★ receive 超时 15s
+    WinHttpSetTimeouts(hSession, 5000, 5000, 10000, 15000);
 
     HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(),
         INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -153,12 +236,24 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
         return "ERROR: WinHttpOpenRequest failed";
     }
 
+    // ★ 注册当前请求，以便 AbortCurrentAIRequest 中断
+    g_currentRequest.store(hRequest);
+
     std::wstring headers = L"Content-Type: application/json\r\n";
     headers += L"Authorization: Bearer " + U2WLocal(g_config.api_key) + L"\r\n";
     WinHttpAddRequestHeaders(hRequest, headers.c_str(), -1, WINHTTP_ADDREQ_FLAG_ADD);
 
+    if (IsStopRequested()) {
+        g_currentRequest.store(nullptr);
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return "ERROR: ABORTED";
+    }
+
     if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-        (LPVOID)body_str.c_str(), body_str.size(), body_str.size(), 0)) {
+        (LPVOID)body_str.c_str(), (DWORD)body_str.size(), (DWORD)body_str.size(), 0)) {
+        g_currentRequest.store(nullptr);
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
@@ -166,13 +261,13 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
     }
 
     if (!WinHttpReceiveResponse(hRequest, nullptr)) {
+        g_currentRequest.store(nullptr);
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
         return "ERROR: WinHttpReceiveResponse failed";
     }
 
-    // HTTP status
     DWORD statusCode = 0;
     DWORD statusSize = sizeof(statusCode);
     WinHttpQueryHeaders(hRequest,
@@ -183,9 +278,18 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
     std::string response;
     DWORD size = 0;
     do {
+        if (IsStopRequested()) {
+            std::cout << "[AI] aborted during read" << std::endl;
+            g_currentRequest.store(nullptr);
+            WinHttpCloseHandle(hRequest);
+            WinHttpCloseHandle(hConnect);
+            WinHttpCloseHandle(hSession);
+            return "ERROR: ABORTED";
+        }
         if (!WinHttpQueryDataAvailable(hRequest, &size)) break;
         if (size == 0) break;
-        char* buffer = new char[size + 1];
+        char* buffer = new (std::nothrow) char[size + 1];
+        if (!buffer) break;
         DWORD read = 0;
         if (!WinHttpReadData(hRequest, buffer, size, &read)) {
             delete[] buffer;
@@ -195,15 +299,29 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
         delete[] buffer;
     } while (size > 0);
 
+    g_currentRequest.store(nullptr);
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
+
+    std::cout << "[AI] status=" << statusCode
+        << " body_len=" << response.size() << std::endl;
+
+    if (statusCode != 200) {
+        std::string detail = response;
+        if (detail.size() > 2000) detail = detail.substr(0, 2000) + "...(truncated)";
+        std::cout << "[AI] HTTP " << statusCode << " body: " << detail << std::endl;
+    }
 
     if (statusCode == 401) return "ERROR: AUTH_FAILED";
     if (statusCode == 403) return "ERROR: PERMISSION_DENIED";
     if (statusCode == 429) return "ERROR: RATE_LIMITED";
     if (statusCode == 402) return "ERROR: INSUFFICIENT_QUOTA";
-    if (statusCode == 400) return "ERROR: BAD_REQUEST";
+    if (statusCode == 400) {
+        std::string detail = response;
+        if (detail.size() > 800) detail = detail.substr(0, 800) + "...(truncated)";
+        return "ERROR: BAD_REQUEST: " + detail;
+    }
     if (statusCode >= 500) return "ERROR: SERVER_ERROR";
     if (statusCode != 200) return "ERROR: HTTP_" + std::to_string(statusCode);
 
@@ -240,7 +358,9 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
     try {
         if (!resp.contains("choices") || resp["choices"].empty())
             return "ERROR: NO_CHOICES";
-        return resp["choices"][0]["message"]["content"].get<std::string>();
+        std::string content = resp["choices"][0]["message"]["content"].get<std::string>();
+        std::cout << "[AI] reply=" << content << std::endl;
+        return content;
     }
     catch (...) { return "ERROR: PARSE_FAILED"; }
 }

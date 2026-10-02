@@ -3,12 +3,16 @@
 #include "config.h"
 #include "i18n.h"
 #include "file_picker.h"
+#include "panel_host.h"
+
 #include <wrl.h>
 #include <WebView2.h>
+#include <atomic>
 #include <mutex>
 #include <vector>
 #include <thread>
 #include <iostream>
+
 #include "C:\Users\Administrator\Downloads\json.hpp"
 
 using namespace Microsoft::WRL;
@@ -70,9 +74,7 @@ static std::string JsonEscape(const std::string& s) {
                 snprintf(buf, sizeof(buf), "\\u%04x", c);
                 r += buf;
             }
-            else {
-                r += c;
-            }
+            else r += c;
         }
     }
     return r;
@@ -118,6 +120,7 @@ void PushLogToFrontend(const std::string& text) {
     }
 
     PostToJSFromAnyThread(jsonStr);
+    PostToPanel(jsonStr);
 }
 
 void FlushPendingLogs() {
@@ -126,9 +129,9 @@ void FlushPendingLogs() {
         std::lock_guard<std::mutex> lock(g_logQueueMutex);
         pending.swap(g_logQueue);
     }
-    std::cout << "[FLUSH] " << pending.size() << " pending logs" << std::endl;
     for (auto& j : pending) {
         PostToJSFromAnyThread(j);
+        PostToPanel(j);
     }
 }
 
@@ -145,6 +148,47 @@ void NotifyPickedItems(const std::vector<PickedItem>& items) {
     resp["type"] = "pickedItems";
     resp["items"] = arr;
     PostToJS(resp.dump());
+}
+
+// ★ 绑定 g_bridge 到 WebView2
+static void BindBridgeCallbacks() {
+    g_bridge.onDone = [](bool success, const std::string& reason) {
+        json j;
+        j["type"] = "done";
+        j["success"] = success;
+        j["reason"] = reason;
+        PostToJSFromAnyThread(j.dump());
+        PostToPanel(j.dump());
+        };
+
+    g_bridge.onStep = [](int cur, int total) {
+        json j;
+        j["type"] = "step";
+        j["current"] = cur;
+        j["total"] = total;
+        PostToJSFromAnyThread(j.dump());
+        PostToPanel(j.dump());
+        };
+
+    g_bridge.onAIError = [](const std::string& type, const std::string& message) {
+        json j;
+        j["type"] = "aiError";
+        j["errType"] = type;
+        j["message"] = message;
+        PostToJSFromAnyThread(j.dump());
+        PostToPanel(j.dump());
+        };
+
+    g_bridge.onScreenshot = [](const std::string& b64) {
+        json j;
+        j["type"] = "screenshot";
+        j["b64"] = b64;
+        PostToJSFromAnyThread(j.dump());
+        };
+
+    g_bridge.onLog = [](LogLevel lv, const std::string& msg) {
+        // 通常不用
+        };
 }
 
 static HRESULT OnWebMessageReceived(ICoreWebView2*,
@@ -168,6 +212,13 @@ static HRESULT OnWebMessageReceived(ICoreWebView2*,
         }
         else if (type == "stop") {
             if (g_stopCb) g_stopCb();
+        }
+        else if (type == "attachImage") {
+            std::string name = j.value("name", "image.png");
+            std::string b64 = j.value("b64", "");
+            extern void SetAttachedImage(const std::string & name, const std::string & b64);
+            SetAttachedImage(name, b64);
+            LogInfo("Image attached: " + name + " (" + std::to_string(b64.size()) + " bytes)");
         }
         else if (type == "winMin") {
             if (g_hwnd) ShowWindow(g_hwnd, SW_MINIMIZE);
@@ -239,23 +290,20 @@ static HRESULT OnWebMessageReceived(ICoreWebView2*,
 bool InitWebView2(HWND hwnd, const std::wstring& htmlPath) {
     g_hwnd = hwnd;
 
+    // ★ 绑定回调
+    BindBridgeCallbacks();
+
     wchar_t temp[MAX_PATH];
     GetTempPathW(MAX_PATH, temp);
     std::wstring userData = std::wstring(temp) + L"Project4WebView2";
 
     auto envCallback = Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
         [htmlPath](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
-            if (FAILED(hr) || !env) {
-                LogError("CreateCoreWebView2Environment failed");
-                return S_OK;
-            }
+            if (FAILED(hr) || !env) return S_OK;
             env->CreateCoreWebView2Controller(g_hwnd,
                 Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                     [htmlPath](HRESULT hr2, ICoreWebView2Controller* controller) -> HRESULT {
-                        if (FAILED(hr2) || !controller) {
-                            LogError("CreateCoreWebView2Controller failed");
-                            return S_OK;
-                        }
+                        if (FAILED(hr2) || !controller) return S_OK;
                         g_controller = controller;
                         controller->get_CoreWebView2(&g_webview);
 
@@ -277,11 +325,9 @@ bool InitWebView2(HWND hwnd, const std::wstring& htmlPath) {
 
                         LogInfo("WebView2 initialized");
 
-                        // ★ 延迟 2 秒 Flush，等前端页面加载 + 绑定事件
                         std::thread([]() {
                             Sleep(2000);
                             FlushPendingLogs();
-                            // ★ 之后再补一条提示
                             LogInfo("Log pipeline ready");
                             }).detach();
 

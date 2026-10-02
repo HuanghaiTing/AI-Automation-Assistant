@@ -17,7 +17,6 @@ void SetTaskCallback(TaskCallback cb);
 void SetStopCallback(StopCallback cb);
 void ShutdownWebView2();
 
-// ★ 日志推送到前端（线程安全，带缓存）
 void PushLogToFrontend(const std::string& text);
 void FlushPendingLogs();
 

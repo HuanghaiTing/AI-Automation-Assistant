@@ -69,6 +69,15 @@
     <ClInclude Include="log_tailer.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="office_automation.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="panel_host.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="ocr.py" />
@@ -83,6 +92,9 @@
       <Filter>源文件</Filter>
     </None>
     <None Include="config.json" />
+    <None Include="panel.html">
+      <Filter>源文件</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -134,6 +146,12 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="log_tailer.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="office_automation.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="panel_host.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
