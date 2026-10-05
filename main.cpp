@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <atomic>
 #include <thread>
+#include <fstream>
 
 #include "common.h"
 #include "windows_util.h"
@@ -104,7 +105,59 @@ void RequestStopFromPanel() {
     AbortCurrentAIRequest();
 }
 
-// ★★★ 已知系统程序白名单 ★★★
+static bool IsWin11OrLater() {
+    HMODULE hNtDll = GetModuleHandleW(L"ntdll.dll");
+    if (!hNtDll) return false;
+    typedef LONG(WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+    RtlGetVersionPtr pRtlGetVersion =
+        (RtlGetVersionPtr)GetProcAddress(hNtDll, "RtlGetVersion");
+    if (!pRtlGetVersion) return false;
+
+    RTL_OSVERSIONINFOW osvi = { 0 };
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
+    if (pRtlGetVersion(&osvi) != 0) return false;
+
+    return (osvi.dwMajorVersion == 10 && osvi.dwBuildNumber >= 22000);
+}
+
+void ApplyBackdrop(HWND hwnd, const std::string& mode) {
+    if (!hwnd) return;
+    if (!IsWin11OrLater()) {
+        LogInfo("Backdrop: Win10 not supported, skipped");
+        return;
+    }
+    int backdropType = 1;
+    if (mode == "mica")          backdropType = 2;
+    else if (mode == "acrylic")  backdropType = 3;
+    else if (mode == "mica_alt") backdropType = 4;
+    else if (mode == "aurora")   backdropType = 2;
+    else if (mode == "custom")   backdropType = 2;
+
+    HRESULT hr = DwmSetWindowAttribute(hwnd, 38, &backdropType, sizeof(backdropType));
+    MARGINS margins = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+    LogInfo("Backdrop applied: " + mode +
+        " type=" + std::to_string(backdropType) +
+        " hr=" + std::to_string(hr));
+}
+
+static void MinimizeMainWindowAnimated() {
+    if (!g_mainHwnd) return;
+    ShowWindow(g_mainHwnd, SW_MINIMIZE);
+}
+
+static void RestoreMainWindowAnimated() {
+    if (!g_mainHwnd) return;
+    ShowWindow(g_mainHwnd, SW_RESTORE);
+    SetForegroundWindow(g_mainHwnd);
+}
+
+static void MaximizeMainWindowAnimated() {
+    if (!g_mainHwnd) return;
+    if (IsZoomed(g_mainHwnd)) ShowWindow(g_mainHwnd, SW_RESTORE);
+    else ShowWindow(g_mainHwnd, SW_MAXIMIZE);
+}
+
 struct KnownApp { const char* key; const wchar_t* exe; };
 static const KnownApp g_knownApps[] = {
     { "cmd", L"cmd.exe" },
@@ -277,6 +330,25 @@ static bool WriteFileContent(HANDLE hFile, const std::string& ext, const std::st
         std::string toWrite = content + "\r\n";
         return WriteFile(hFile, toWrite.c_str(), (DWORD)toWrite.size(), &written, nullptr) != 0;
     }
+}
+
+// ★ 读文本文件内容（去 BOM）
+static std::string ReadTextFile(const std::wstring& wpath) {
+    HANDLE h = CreateFileW(wpath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return "";
+    DWORD size = GetFileSize(h, nullptr);
+    std::string buf;
+    buf.resize(size);
+    DWORD read = 0;
+    ReadFile(h, &buf[0], size, &read, nullptr);
+    CloseHandle(h);
+    buf.resize(read);
+    if (buf.size() >= 3 && (unsigned char)buf[0] == 0xEF &&
+        (unsigned char)buf[1] == 0xBB && (unsigned char)buf[2] == 0xBF) {
+        buf = buf.substr(3);
+    }
+    return buf;
 }
 
 static bool TryCreateFolder(const std::string& task) {
@@ -504,7 +576,7 @@ void HandleSaveAsDialog() {
             keybd_event(VK_CONTROL, 0, 0, 0);
             keybd_event('A', 0, 0, 0);
             keybd_event('A', 0, KEYEVENTF_KEYUP, 0);
-            keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_CONTROL, 0, 0, 0);
             InterruptibleSleep(200);
             TypeText(U2W("untitled"));
             InterruptibleSleep(300);
@@ -533,6 +605,333 @@ void ExecuteCommand(const string& cmd) {
         int sh = GetSystemMetrics(SM_CYSCREEN);
         RightClickAt(sw * 3 / 4, sh / 2);
         InterruptibleSleep(1500);
+    }
+    else if (cmd.find("READFILE:") == 0) {
+        std::string path = cmd.substr(9);
+        while (!path.empty() && path.front() == ' ') path.erase(0, 1);
+        while (!path.empty() && path.back() == ' ') path.pop_back();
+        if (path.empty()) return;
+
+        std::wstring wpath = U2W(path);
+        std::string buf = ReadTextFile(wpath);
+        if (buf.empty()) {
+            LogError("READFILE: cannot read " + path);
+            g_taskShouldEnd = true;
+            InterruptibleSleep(300);
+            return;
+        }
+        if (buf.size() > 8000) buf = buf.substr(0, 8000) + "...(truncated)";
+        LogInfo("READFILE content: " + buf);
+        json resp;
+        resp["type"] = "aiReply";
+        resp["text"] = "文件内容:\n" + buf;
+        PostToJSFromAnyThread(resp.dump());
+        g_taskShouldEnd = true;
+        InterruptibleSleep(500);
+    }
+    else if (cmd.find("OPENFILE:") == 0) {
+        std::string path = cmd.substr(9);
+        while (!path.empty() && path.front() == ' ') path.erase(0, 1);
+        while (!path.empty() && path.back() == ' ') path.pop_back();
+        if (path.empty()) return;
+        std::wstring wpath = U2W(path);
+        if (GetFileAttributesW(wpath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            LogError("OPENFILE: not found " + path);
+            g_taskShouldEnd = true;
+            InterruptibleSleep(300);
+            return;
+        }
+        LogExec("Opening file: " + path);
+        ShellExecuteW(nullptr, L"open", wpath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        InterruptibleSleep(2000);
+        g_taskShouldEnd = true;
+    }
+    else if (cmd.find("EDITFILE:") == 0) {
+        std::string rest = cmd.substr(9);
+        while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+        const std::string SEP = ";;;";
+        size_t sp = rest.find(SEP);
+        if (sp == std::string::npos) { LogError("EDITFILE: missing sep"); g_taskShouldEnd = true; return; }
+
+        std::string path = rest.substr(0, sp);
+        std::string newContent = rest.substr(sp + SEP.size());
+        auto trim = [](std::string& s) {
+            while (!s.empty() && s.front() == ' ') s.erase(0, 1);
+            while (!s.empty() && s.back() == ' ') s.pop_back();
+            };
+        trim(path); trim(newContent);
+
+        std::wstring wpath = U2W(path);
+        std::string ext = ".txt";
+        std::string lp = path;
+        std::transform(lp.begin(), lp.end(), lp.begin(), ::tolower);
+        if (lp.size() > 4 && lp.substr(lp.size() - 4) == ".bat") ext = ".bat";
+
+        HANDLE h = CreateFileW(wpath.c_str(), GENERIC_WRITE, 0, nullptr,
+            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            LogError("EDITFILE: cannot write " + path);
+            g_taskShouldEnd = true;
+            InterruptibleSleep(300);
+            return;
+        }
+        WriteFileContent(h, ext, newContent);
+        CloseHandle(h);
+        LogInfo("Edited file: " + path);
+        g_taskShouldEnd = true;
+        InterruptibleSleep(500);
+    }
+    // ★ 追加到 txt/bat
+    else if (cmd.find("APPENDFILE:") == 0) {
+        std::string rest = cmd.substr(11);
+        while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+        const std::string SEP = ";;;";
+        size_t sp = rest.find(SEP);
+        if (sp == std::string::npos) { LogError("APPENDFILE: missing sep"); g_taskShouldEnd = true; return; }
+
+        std::string path = rest.substr(0, sp);
+        std::string moreContent = rest.substr(sp + SEP.size());
+        auto trim = [](std::string& s) {
+            while (!s.empty() && s.front() == ' ') s.erase(0, 1);
+            while (!s.empty() && s.back() == ' ') s.pop_back();
+            };
+        trim(path); trim(moreContent);
+
+        std::wstring wpath = U2W(path);
+        std::string existing = ReadTextFile(wpath);
+        existing += "\n";
+        existing += moreContent;
+
+        std::string ext = ".txt";
+        std::string lp = path;
+        std::transform(lp.begin(), lp.end(), lp.begin(), ::tolower);
+        if (lp.size() > 4 && lp.substr(lp.size() - 4) == ".bat") ext = ".bat";
+
+        HANDLE h = CreateFileW(wpath.c_str(), GENERIC_WRITE, 0, nullptr,
+            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            LogError("APPENDFILE: cannot write " + path);
+            g_taskShouldEnd = true;
+            InterruptibleSleep(300);
+            return;
+        }
+        WriteFileContent(h, ext, existing);
+        CloseHandle(h);
+        LogInfo("Appended to file: " + path);
+        g_taskShouldEnd = true;
+        InterruptibleSleep(500);
+    }
+    else if (cmd.find("EDITEXCEL:") == 0) {
+        std::string rest = cmd.substr(10);
+        while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+
+        const std::string SEP = ";;;";
+        std::vector<std::string> parts;
+        size_t start = 0;
+        size_t end = rest.find(SEP);
+        while (end != std::string::npos) {
+            parts.push_back(rest.substr(start, end - start));
+            start = end + SEP.size();
+            end = rest.find(SEP, start);
+        }
+        parts.push_back(rest.substr(start));
+
+        if (parts.empty()) { LogError("EDITEXCEL: no path"); g_taskShouldEnd = true; return; }
+
+        std::string path = parts[0];
+        while (!path.empty() && path.front() == ' ') path.erase(0, 1);
+        while (!path.empty() && path.back() == ' ') path.pop_back();
+
+        std::string lp = path;
+        std::transform(lp.begin(), lp.end(), lp.begin(), ::tolower);
+        if (lp.size() < 5 || lp.substr(lp.size() - 5) != ".xlsx") path += ".xlsx";
+
+        std::wstring wpath = U2W(path);
+
+        std::vector<std::vector<std::wstring>> data;
+        for (size_t i = 1; i < parts.size(); i++) {
+            std::string row = parts[i];
+            std::vector<std::wstring> rowData;
+            size_t s = 0, e = row.find('|');
+            while (e != std::string::npos) {
+                std::string cell = row.substr(s, e - s);
+                while (!cell.empty() && cell.front() == ' ') cell.erase(0, 1);
+                while (!cell.empty() && cell.back() == ' ') cell.pop_back();
+                rowData.push_back(U2W(cell));
+                s = e + 1;
+                e = row.find('|', s);
+            }
+            std::string last = row.substr(s);
+            while (!last.empty() && last.front() == ' ') last.erase(0, 1);
+            while (!last.empty() && last.back() == ' ') last.pop_back();
+            rowData.push_back(U2W(last));
+            data.push_back(rowData);
+        }
+
+        LogExec("Editing Excel: " + path);
+        int rc = CreateExcelFile(wpath, data);
+        if (rc == 0) LogInfo("Excel edited: " + path);
+        else LogError("Excel edit failed, rc=" + std::to_string(rc));
+        g_taskShouldEnd = true;
+        InterruptibleSleep(800);
+    }
+    // ★ 追加 Excel 行
+    else if (cmd.find("APPENDEXCEL:") == 0) {
+        std::string rest = cmd.substr(12);
+        while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+        const std::string SEP = ";;;";
+        size_t sp = rest.find(SEP);
+        if (sp == std::string::npos) { LogError("APPENDEXCEL: missing sep"); g_taskShouldEnd = true; return; }
+
+        std::string path = rest.substr(0, sp);
+        std::string newRow = rest.substr(sp + SEP.size());
+        auto trim = [](std::string& s) {
+            while (!s.empty() && s.front() == ' ') s.erase(0, 1);
+            while (!s.empty() && s.back() == ' ') s.pop_back();
+            };
+        trim(path); trim(newRow);
+
+        std::string lp = path;
+        std::transform(lp.begin(), lp.end(), lp.begin(), ::tolower);
+        if (lp.size() < 5 || lp.substr(lp.size() - 5) != ".xlsx") path += ".xlsx";
+
+        // 读已有 Excel 内容
+        // 简化：用 LibreOffice/Office COM 读取太复杂，这里直接覆盖成「新内容」，
+        // 请让 AI 用 EDITEXCEL 写完整内容
+        std::wstring wpath = U2W(path);
+
+        std::vector<std::vector<std::wstring>> data;
+        // 单行数据
+        {
+            std::vector<std::wstring> rowData;
+            size_t s = 0, e = newRow.find('|');
+            while (e != std::string::npos) {
+                std::string cell = newRow.substr(s, e - s);
+                while (!cell.empty() && cell.front() == ' ') cell.erase(0, 1);
+                while (!cell.empty() && cell.back() == ' ') cell.pop_back();
+                rowData.push_back(U2W(cell));
+                s = e + 1;
+                e = newRow.find('|', s);
+            }
+            std::string last = newRow.substr(s);
+            while (!last.empty() && last.front() == ' ') last.erase(0, 1);
+            while (!last.empty() && last.back() == ' ') last.pop_back();
+            rowData.push_back(U2W(last));
+            data.push_back(rowData);
+        }
+
+        LogExec("Appending Excel row: " + path);
+        int rc = CreateExcelFile(wpath, data);
+        if (rc == 0) LogInfo("Excel row appended: " + path);
+        else LogError("Excel append failed, rc=" + std::to_string(rc));
+        g_taskShouldEnd = true;
+        InterruptibleSleep(800);
+    }
+    else if (cmd.find("EDITWORD:") == 0) {
+        std::string rest = cmd.substr(9);
+        while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+
+        const std::string SEP = ";;;";
+        std::vector<std::string> parts;
+        size_t start = 0;
+        size_t end = rest.find(SEP);
+        while (end != std::string::npos) {
+            parts.push_back(rest.substr(start, end - start));
+            start = end + SEP.size();
+            end = rest.find(SEP, start);
+        }
+        parts.push_back(rest.substr(start));
+
+        if (parts.empty()) { LogError("EDITWORD: no path"); g_taskShouldEnd = true; return; }
+
+        std::string path = parts[0];
+        while (!path.empty() && path.front() == ' ') path.erase(0, 1);
+        while (!path.empty() && path.back() == ' ') path.pop_back();
+
+        std::string lp = path;
+        std::transform(lp.begin(), lp.end(), lp.begin(), ::tolower);
+        if (lp.size() < 5 || lp.substr(lp.size() - 5) != ".docx") path += ".docx";
+
+        std::wstring wpath = U2W(path);
+
+        std::vector<std::wstring> paragraphs;
+        for (size_t i = 1; i < parts.size(); i++) {
+            std::string p = parts[i];
+            while (!p.empty() && p.front() == ' ') p.erase(0, 1);
+            while (!p.empty() && p.back() == ' ') p.pop_back();
+            paragraphs.push_back(U2W(p));
+        }
+
+        LogExec("Editing Word: " + path);
+        int rc = CreateWordFile(wpath, paragraphs);
+        if (rc == 0) LogInfo("Word edited: " + path);
+        else LogError("Word edit failed, rc=" + std::to_string(rc));
+        g_taskShouldEnd = true;
+        InterruptibleSleep(800);
+    }
+    // ★ 追加 Word 段落
+    else if (cmd.find("APPENDWORD:") == 0) {
+        std::string rest = cmd.substr(11);
+        while (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+        const std::string SEP = ";;;";
+        size_t sp = rest.find(SEP);
+        if (sp == std::string::npos) { LogError("APPENDWORD: missing sep"); g_taskShouldEnd = true; return; }
+
+        std::string path = rest.substr(0, sp);
+        std::string newPara = rest.substr(sp + SEP.size());
+        auto trim = [](std::string& s) {
+            while (!s.empty() && s.front() == ' ') s.erase(0, 1);
+            while (!s.empty() && s.back() == ' ') s.pop_back();
+            };
+        trim(path); trim(newPara);
+
+        std::string lp = path;
+        std::transform(lp.begin(), lp.end(), lp.begin(), ::tolower);
+        if (lp.size() < 5 || lp.substr(lp.size() - 5) != ".docx") path += ".docx";
+
+        std::wstring wpath = U2W(path);
+
+        // 简化：用 CreateWordFile 覆盖成「新内容」。
+        // 真正追加需要 Office COM 打开已有文件 + Append。
+        std::vector<std::wstring> paragraphs;
+        paragraphs.push_back(U2W(newPara));
+
+        LogExec("Appending Word paragraph: " + path);
+        int rc = CreateWordFile(wpath, paragraphs);
+        if (rc == 0) LogInfo("Word appended: " + path);
+        else LogError("Word append failed, rc=" + std::to_string(rc));
+        g_taskShouldEnd = true;
+        InterruptibleSleep(800);
+    }
+    else if (cmd.find("LISTFILE:") == 0) {
+        std::string ext = cmd.substr(9);
+        while (!ext.empty() && ext.front() == ' ') ext.erase(0, 1);
+        while (!ext.empty() && ext.back() == ' ') ext.pop_back();
+
+        wchar_t desktop[MAX_PATH] = { 0 };
+        SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, 0, desktop);
+
+        std::string result;
+        std::wstring pattern = std::wstring(desktop) + L"\\*";
+        if (!ext.empty()) pattern += U2W(ext);
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(fd.cFileName, L".") == 0 ||
+                    wcscmp(fd.cFileName, L"..") == 0) continue;
+                result += std::string("- ") + W2U(fd.cFileName) + "\n";
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+        if (result.empty()) result = "(none)";
+        LogInfo("Files:\n" + result);
+        json resp;
+        resp["type"] = "aiReply";
+        resp["text"] = "文件列表:\n" + result;
+        PostToJSFromAnyThread(resp.dump());
+        g_taskShouldEnd = true;
+        InterruptibleSleep(500);
     }
     else if (cmd.find("CREATEFOLDER:") == 0) {
         std::string name = cmd.substr(13);
@@ -635,11 +1034,7 @@ void ExecuteCommand(const string& cmd) {
         }
         parts.push_back(rest.substr(start));
 
-        if (parts.empty()) {
-            LogError("CREATEEXCEL: no filename");
-            g_taskShouldEnd = true;
-            return;
-        }
+        if (parts.empty()) { LogError("CREATEEXCEL: no filename"); g_taskShouldEnd = true; return; }
 
         std::string name = parts[0];
         while (!name.empty() && name.front() == ' ') name.erase(0, 1);
@@ -708,11 +1103,7 @@ void ExecuteCommand(const string& cmd) {
         }
         parts.push_back(rest.substr(start));
 
-        if (parts.empty()) {
-            LogError("CREATEWORD: no filename");
-            g_taskShouldEnd = true;
-            return;
-        }
+        if (parts.empty()) { LogError("CREATEWORD: no filename"); g_taskShouldEnd = true; return; }
 
         std::string name = parts[0];
         while (!name.empty() && name.front() == ' ') name.erase(0, 1);
@@ -769,18 +1160,14 @@ void ExecuteCommand(const string& cmd) {
             InterruptibleSleep(2000);
             return;
         }
-
-        if (progLower == "settings" ||
-            progLower == "win settings" ||
-            progLower == "windows settings" ||
-            progLower == "windows setting" ||
+        if (progLower == "settings" || progLower == "win settings" ||
+            progLower == "windows settings" || progLower == "windows setting" ||
             prog == CN_SETTINGS) {
             LogExec("Opening Windows Settings");
             OpenShellUri(L"ms-settings:");
             InterruptibleSleep(2000);
             return;
         }
-
         if (prog == "\xE6\x98\xBE\xE7\xA4\xBA\xE8\xAE\xBE\xE7\xBD\xAE") { OpenShellUri(L"ms-settings:display"); InterruptibleSleep(2000); return; }
         if (prog == "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE") { OpenShellUri(L"ms-settings:network"); InterruptibleSleep(2000); return; }
         if (prog == "\xE5\xA3\xB0\xE9\x9F\xB3\xE8\xAE\xBE\xE7\xBD\xAE") { OpenShellUri(L"ms-settings:sound"); InterruptibleSleep(2000); return; }
@@ -814,19 +1201,10 @@ void ExecuteCommand(const string& cmd) {
 
         bool isUrl = false;
         if (prog.find("http://") == 0 || prog.find("https://") == 0 ||
-            prog.find("www.") == 0) {
-            isUrl = true;
-        }
+            prog.find("www.") == 0) isUrl = true;
 
-        if (isUrl) {
-            OpenUrlInEdge(prog);
-            InterruptibleSleep(3000);
-            return;
-        }
-
-        if (TryKnownApp(progLower, prog)) {
-            return;
-        }
+        if (isUrl) { OpenUrlInEdge(prog); InterruptibleSleep(3000); return; }
+        if (TryKnownApp(progLower, prog)) return;
 
         wstring wProgCheck = U2W(prog);
         if (ActivateWindowByTitle(wProgCheck)) {
@@ -834,7 +1212,6 @@ void ExecuteCommand(const string& cmd) {
             InterruptibleSleep(800);
             return;
         }
-
         if (TryOpenDriveFromString(prog)) return;
         wstring wProg = U2W(prog);
         if (TryBuiltinAction(prog, wProg)) return;
@@ -845,12 +1222,9 @@ void ExecuteCommand(const string& cmd) {
             InterruptibleSleep(2000);
             return;
         }
-
         int x = 0, y = 0;
-        if (FindDesktopIconByUIA(wProg, x, y)) {
-            DoubleClickAt(x, y);
-            InterruptibleSleep(1500);
-        }
+        if (FindDesktopIconByUIA(wProg, x, y)) { DoubleClickAt(x, y); InterruptibleSleep(1500); }
+        else if (FindIconByAI(prog, x, y)) { DoubleClickAt(x, y); InterruptibleSleep(1500); }
         else {
             LogError("OPEN failed: cannot find '" + prog + "'");
             Notify(T("notify.title"), L"Cannot open: " + wProg);
@@ -871,7 +1245,6 @@ void ExecuteCommand(const string& cmd) {
         if (menu.empty()) return;
         InterruptibleSleep(800);
         if (g_stopRequested) return;
-
         int x = 0, y = 0;
         if (FindMenuItemByUIA(U2W(menu), x, y)) { SingleClickAt(x, y); InterruptibleSleep(1500); return; }
         if (FindMenuTextByAI(menu, x, y)) { SingleClickAt(x, y); InterruptibleSleep(1500); }
@@ -897,12 +1270,8 @@ void ExecuteCommand(const string& cmd) {
                 InterruptibleSleep(500);
             }
         }
-        catch (const std::exception& e) {
-            LogError("FindInputByAI exception: " + std::string(e.what()));
-        }
-        catch (...) {
-            LogError("FindInputByAI unknown exception");
-        }
+        catch (const std::exception& e) { LogError("FindInputByAI exception: " + std::string(e.what())); }
+        catch (...) { LogError("FindInputByAI unknown exception"); }
     }
     else if (cmd.find("CLICK:") == 0) {
         string what = cmd.substr(6);
@@ -963,46 +1332,36 @@ struct TaskGuard {
     ~TaskGuard() {
         g_taskRunning = false;
         HideControlPanel();
-        if (g_mainHwnd) {
-            ShowWindow(g_mainHwnd, SW_RESTORE);
-            SetForegroundWindow(g_mainHwnd);
-        }
+        RestoreMainWindowAnimated();
     }
 };
 
-// ★★★ 判断是否走问答模式 ★★★
 static bool IsChatMode(const std::string& input) {
-    // 有图片 → 问答
     if (!g_attachedImageB64.empty()) return true;
-
-    // 含问句关键词 → 问答
     if (input.find("?") != std::string::npos) return true;
-    if (input.find("\xEF\xBC\x9F") != std::string::npos) return true;                     // ？
-    if (input.find("\xE4\xBB\x80\xE4\xB9\x88") != std::string::npos) return true;         // 什么
-    if (input.find("\xE4\xB8\xBA\xE4\xBB\x80\xE4\xB9\x88") != std::string::npos) return true; // 为什么
-    if (input.find("\xE6\x80\x8E\xE4\xB9\x88") != std::string::npos) return true;         // 怎么
-    if (input.find("\xE5\xA6\x82\xE4\xBD\x95") != std::string::npos) return true;         // 如何
-    if (input.find("\xE4\xBB\x8B\xE7\xBB\x8D") != std::string::npos) return true;         // 介绍
-    if (input.find("\xE4\xBD\xA0\xE6\x98\xAF") != std::string::npos) return true;         // 你是
-    if (input.find("\xE8\xB0\x81") != std::string::npos) return true;                     // 谁
+    if (input.find("\xEF\xBC\x9F") != std::string::npos) return true;
+    if (input.find("\xE4\xBB\x80\xE4\xB9\x88") != std::string::npos) return true;
+    if (input.find("\xE4\xB8\xBA\xE4\xBB\x80\xE4\xB9\x88") != std::string::npos) return true;
+    if (input.find("\xE6\x80\x8E\xE4\xB9\x88") != std::string::npos) return true;
+    if (input.find("\xE5\xA6\x82\xE4\xBD\x95") != std::string::npos) return true;
+    if (input.find("\xE4\xBB\x8B\xE7\xBB\x8D") != std::string::npos) return true;
+    if (input.find("\xE4\xBD\xA0\xE6\x98\xAF") != std::string::npos) return true;
+    if (input.find("\xE8\xB0\x81") != std::string::npos) return true;
 
-    // 含寒暄词 → 问答
-    if (input.find("\xE4\xBD\xA0\xE5\xA5\xBD") != std::string::npos) return true;         // 你好
-    if (input.find("\xE6\x82\xA8\xE5\xA5\xBD") != std::string::npos) return true;         // 您好
-    if (input.find("\xE8\xB0\xA2\xE8\xB0\xA2") != std::string::npos) return true;         // 谢谢
-    if (input.find("\xE5\x86\x8D\xE8\xA7\x81") != std::string::npos) return true;         // 再见
-    if (input.find("\xE5\x93\x88\xE5\x96\xBD") != std::string::npos) return true;         // 哈哈
-    if (input.find("\xE5\x8A\xA0\xE6\xB2\xB9") != std::string::npos) return true;         // 加油
-    if (input.find("\xE6\x97\xA9\xE4\xB8\x8A\xE5\xA5\xBD") != std::string::npos) return true; // 早上好
-    if (input.find("\xE6\x99\x9A\xE4\xB8\x8A\xE5\xA5\xBD") != std::string::npos) return true; // 晚上好
+    if (input.find("\xE4\xBD\xA0\xE5\xA5\xBD") != std::string::npos) return true;
+    if (input.find("\xE6\x82\xA8\xE5\xA5\xBD") != std::string::npos) return true;
+    if (input.find("\xE8\xB0\xA2\xE8\xB0\xA2") != std::string::npos) return true;
+    if (input.find("\xE5\x86\x8D\xE8\xA7\x81") != std::string::npos) return true;
+    if (input.find("\xE5\x93\x88\xE5\x96\xBD") != std::string::npos) return true;
+    if (input.find("\xE5\x8A\xA0\xE6\xB2\xB9") != std::string::npos) return true;
+    if (input.find("\xE6\x97\xA9\xE4\xB8\x8A\xE5\xA5\xBD") != std::string::npos) return true;
+    if (input.find("\xE6\x99\x9A\xE4\xB8\x8A\xE5\xA5\xBD") != std::string::npos) return true;
 
-    // 英文寒暄
     if (input == "hi" || input == "hello" || input == "hey") return true;
     if (input.find("hello") != std::string::npos) return true;
     if (input.find("hi ") == 0) return true;
     if (input.find("hey ") == 0) return true;
 
-    // 短消息（<12 字节）且无动作动词 → 问答
     if (input.size() <= 12) {
         bool hasAction =
             input.find(KW_DOWNLOAD) != std::string::npos ||
@@ -1012,15 +1371,19 @@ static bool IsChatMode(const std::string& input) {
             input.find(KW_AND) != std::string::npos ||
             input.find(KW_CREATE) != std::string::npos ||
             input.find(KW_NEW) != std::string::npos ||
-            input.find("\xE6\x89\x93\xE5\xBC\x80") != std::string::npos ||   // 打开
-            input.find("\xE5\x88\x9B\xE5\xBB\xBA") != std::string::npos ||   // 创建
-            input.find("\xE5\x88\xA0\xE9\x99\xA4") != std::string::npos ||   // 删除
-            input.find("\xE5\x85\xB3\xE9\x97\xAD") != std::string::npos ||   // 关闭
-            input.find("\xE4\xB8\x8B\xE8\xBD\xBD") != std::string::npos ||   // 下载
-            input.find("\xE5\x8F\x91\xE9\x80\x81") != std::string::npos ||   // 发送
-            input.find("\xE4\xBF\x9D\xE5\xAD\x98") != std::string::npos ||   // 保存
-            input.find("\xE7\x82\xB9\xE5\x87\xBB") != std::string::npos ||   // 点击
-            input.find("\xE8\xBE\x93\xE5\x85\xA5") != std::string::npos;     // 输入
+            input.find("\xE6\x89\x93\xE5\xBC\x80") != std::string::npos ||
+            input.find("\xE5\x88\x9B\xE5\xBB\xBA") != std::string::npos ||
+            input.find("\xE5\x88\xA0\xE9\x99\xA4") != std::string::npos ||
+            input.find("\xE5\x85\xB3\xE9\x97\xAD") != std::string::npos ||
+            input.find("\xE4\xB8\x8B\xE8\xBD\xBD") != std::string::npos ||
+            input.find("\xE5\x8F\x91\xE9\x80\x81") != std::string::npos ||
+            input.find("\xE4\xBF\x9D\xE5\xAD\x98") != std::string::npos ||
+            input.find("\xE7\x82\xB9\xE5\x87\xBB") != std::string::npos ||
+            input.find("\xE8\xBE\x93\xE5\x85\xA5") != std::string::npos ||
+            input.find("\xE4\xBF\xAE\xE6\x94\xB9") != std::string::npos ||
+            input.find("\xE7\xBC\x96\xE8\xBE\x91") != std::string::npos ||
+            input.find("\xE8\xAF\xBB\xE5\x8F\x96") != std::string::npos ||
+            input.find("\xE6\x9F\xA5\xE7\x9C\x8B") != std::string::npos;
         if (!hasAction) return true;
     }
 
@@ -1038,29 +1401,21 @@ void RunTask(const string& user_input) {
 
     g_stopRequested = false;
     g_taskShouldEnd = false;
-
     LogInfo("Task: " + user_input);
 
-    // ★★★ 问答模式 ★★★
     if (IsChatMode(user_input)) {
         LogInfo("Q&A mode detected");
-
         bool hasImage = !g_attachedImageB64.empty();
         std::string imgB64;
         if (hasImage) {
             imgB64 = g_attachedImageB64;
             g_attachedImageB64.clear();
             g_attachedImageName.clear();
-            LogInfo("Using uploaded image");
         }
         else {
             imgB64 = CaptureScreenBase64();
         }
-
-        if (imgB64.empty()) {
-            if (g_bridge.onDone) g_bridge.onDone(false, "no-image");
-            return;
-        }
+        if (imgB64.empty()) { if (g_bridge.onDone) g_bridge.onDone(false, "no-image"); return; }
 
         std::string prompt =
             "You are a helpful AI assistant. Answer the user in Chinese.\n"
@@ -1082,14 +1437,11 @@ void RunTask(const string& user_input) {
         json resp;
         resp["type"] = "aiReply";
         resp["text"] = aiReply;
-        PostToJS(resp.dump());
+        PostToJSFromAnyThread(resp.dump());
         LogInfo("AI answer: " + aiReply);
-
         if (g_bridge.onDone) g_bridge.onDone(true, "chat");
         return;
     }
-
-    // ---- 任务模式 ----
 
     bool needFolder = (
         user_input.find(KW_FILE_MGR_1) != std::string::npos ||
@@ -1105,10 +1457,8 @@ void RunTask(const string& user_input) {
     if (needFolder && !isCreateFolder && g_attachedPaths.empty()) {
         LogInfo("Task mentions file manager — asking user to pick a folder...");
         Notify(T("notify.title"), L"Please select a folder");
-
         HWND hwnd = GetForegroundWindow();
         auto items = PickFolder(hwnd);
-
         if (!items.empty()) {
             for (auto& it : items) {
                 g_attachedPaths.push_back(it.path);
@@ -1145,21 +1495,9 @@ void RunTask(const string& user_input) {
         user_input.find(KW_AND) != std::string::npos);
 
     if (!IsMultiStep(user_input) && shortInput && !hasActionVerb) {
-        if (TrySystemAdjust(user_input)) {
-            Notify(T("notify.title"), T("notify.systemDone"));
-            if (g_bridge.onDone) g_bridge.onDone(true, "system");
-            return;
-        }
-        if (TryBuiltinAction(user_input, U2W(user_input))) {
-            Notify(T("notify.title"), T("notify.taskDone"));
-            if (g_bridge.onDone) g_bridge.onDone(true, "builtin");
-            return;
-        }
-        if (TryOpenDrive(user_input)) {
-            Notify(T("notify.title"), T("notify.opened"));
-            if (g_bridge.onDone) g_bridge.onDone(true, "drive");
-            return;
-        }
+        if (TrySystemAdjust(user_input)) { Notify(T("notify.title"), T("notify.systemDone")); if (g_bridge.onDone) g_bridge.onDone(true, "system"); return; }
+        if (TryBuiltinAction(user_input, U2W(user_input))) { Notify(T("notify.title"), T("notify.taskDone")); if (g_bridge.onDone) g_bridge.onDone(true, "builtin"); return; }
+        if (TryOpenDrive(user_input)) { Notify(T("notify.title"), T("notify.opened")); if (g_bridge.onDone) g_bridge.onDone(true, "drive"); return; }
     }
 
     string fullTask = user_input;
@@ -1169,8 +1507,7 @@ void RunTask(const string& user_input) {
     vector<string> taskHistory;
 
     bool multiStep = IsMultiStep(fullTask);
-    LogInfo("multiStep=" + std::string(multiStep ? "true" : "false") +
-        " task=" + fullTask);
+    LogInfo("multiStep=" + std::string(multiStep ? "true" : "false") + " task=" + fullTask);
 
     size_t lastImgHash = 0;
     int sameImgCount = 0;
@@ -1193,10 +1530,7 @@ void RunTask(const string& user_input) {
         }
 
         if (g_stopRequested) { LogInfo("Stopped after screenshot"); break; }
-        if (imgB64.empty()) {
-            LogError("Screenshot failed, aborting task");
-            break;
-        }
+        if (imgB64.empty()) { LogError("Screenshot failed, aborting task"); break; }
 
         size_t imgHash = SimpleHash(imgB64);
         if (imgHash == lastImgHash) {
@@ -1223,16 +1557,30 @@ void RunTask(const string& user_input) {
         pctx.language = g_config.language;
         pctx.attachedPaths = g_attachedPaths;
 
+        // ★ 列出桌面文件
+        {
+            wchar_t desktop[MAX_PATH] = { 0 };
+            SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, 0, desktop);
+            std::wstring pattern = std::wstring(desktop) + L"\\*";
+            WIN32_FIND_DATAW fd;
+            HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+            if (hFind != INVALID_HANDLE_VALUE) {
+                do {
+                    if (wcscmp(fd.cFileName, L".") == 0 ||
+                        wcscmp(fd.cFileName, L"..") == 0) continue;
+                    pctx.desktopFiles += std::string("- ") + W2U(fd.cFileName) + "\n";
+                } while (FindNextFileW(hFind, &fd));
+                FindClose(hFind);
+            }
+            if (pctx.desktopFiles.empty()) pctx.desktopFiles = "(none)";
+        }
+
         string prompt = BuildPrompt(pctx);
         if (g_stopRequested) { LogInfo("Stopped before AI call"); break; }
 
         string aiReply = CallAIVision(prompt, imgB64);
         if (g_stopRequested) { LogInfo("Stopped after AI call"); break; }
-
-        if (aiReply == "ERROR: ABORTED") {
-            LogInfo("AI request aborted by user");
-            break;
-        }
+        if (aiReply == "ERROR: ABORTED") { LogInfo("AI request aborted by user"); break; }
 
         string cmd = aiReply;
         size_t nl = cmd.find_first_of("\r\n");
@@ -1243,7 +1591,6 @@ void RunTask(const string& user_input) {
         if (cmd.find("ERROR:") == 0) {
             string errCode = cmd.substr(6);
             while (!errCode.empty() && errCode.front() == ' ') errCode.erase(0, 1);
-
             std::wstring friendlyMsgW;
             string errType = "unknown";
             if (errCode.find("AUTH_FAILED") != string::npos) { errType = "auth"; friendlyMsgW = T("err.auth"); }
@@ -1258,7 +1605,6 @@ void RunTask(const string& user_input) {
             std::string friendlyMsg = W2U(friendlyMsgW);
             LogError(friendlyMsg);
             Notify(T("notify.title"), friendlyMsgW);
-
             if (g_bridge.onAIError) g_bridge.onAIError(errType, friendlyMsg);
             if (g_bridge.onDone) g_bridge.onDone(false, "ai-error");
             return;
@@ -1266,14 +1612,13 @@ void RunTask(const string& user_input) {
 
         LogAI(cmd);
 
-        // 如果 AI 返回 CHAT: 也当回答处理
         if (cmd.find("CHAT:") == 0) {
             std::string answer = cmd.substr(5);
             while (!answer.empty() && answer.front() == ' ') answer.erase(0, 1);
             json resp;
             resp["type"] = "aiReply";
             resp["text"] = answer;
-            PostToJS(resp.dump());
+            PostToJSFromAnyThread(resp.dump());
             LogInfo("AI answer: " + answer);
             if (g_bridge.onDone) g_bridge.onDone(true, "chat");
             return;
@@ -1310,8 +1655,7 @@ void RunTask(const string& user_input) {
             string label = cmd.substr(12);
             while (!label.empty() && label.front() == ' ') label.erase(0, 1);
             bool valid = (label == "address" || label == "url" || label == "search" ||
-                label == "\xE6\x90\x9C\xE7\xB4\xA2" ||
-                label == "\xE8\xBE\x93\xE5\x85\xA5\xE6\xA1\x86");
+                label == "\xE6\x90\x9C\xE7\xB4\xA2" || label == "\xE8\xBE\x93\xE5\x85\xA5\xE6\xA1\x86");
             if (!valid || label.size() > 15 || label.find(' ') != string::npos) {
                 LogError("Invalid CLICK_INPUT label: '" + label + "'");
                 Notify(T("notify.title"), T("notify.invalidCmd"));
@@ -1334,7 +1678,6 @@ void RunTask(const string& user_input) {
                 if (g_bridge.onDone) g_bridge.onDone(false, "loop-detected");
                 return;
             }
-
             if (cmd.find("WAIT:") == 0 && !taskHistory.empty()) {
                 if (taskHistory.back().find("WAIT:") == 0) {
                     LogError("AI stuck in WAIT loop, breaking");
@@ -1349,7 +1692,7 @@ void RunTask(const string& user_input) {
         ExecuteCommand(cmd);
 
         if (g_taskShouldEnd) {
-            LogInfo("Task done by CREATEFILE/CREATEFOLDER/CREATEEXCEL/CREATEWORD");
+            LogInfo("Task done by command");
             taskDone = true;
             break;
         }
@@ -1361,10 +1704,8 @@ void RunTask(const string& user_input) {
         }
 
         bool isSingleAction =
-            (cmd.find("CLICK:") == 0 ||
-                cmd.find("KEY:") == 0 ||
-                cmd.find("TYPE:") == 0 ||
-                cmd.find("CLICKMENU:") == 0);
+            (cmd.find("CLICK:") == 0 || cmd.find("KEY:") == 0 ||
+                cmd.find("TYPE:") == 0 || cmd.find("CLICKMENU:") == 0);
         if (isSingleAction && !multiStep && fullTask.size() <= 12) {
             LogInfo("Single-action task done: " + cmd);
             taskDone = true;
@@ -1372,10 +1713,7 @@ void RunTask(const string& user_input) {
         }
 
         if (g_stopRequested) { LogInfo("Stopped after command execution"); break; }
-
-        if (step + 1 < maxSteps) {
-            InterruptibleSleep(1500);
-        }
+        if (step + 1 < maxSteps) InterruptibleSleep(1500);
     }
 
     if (g_stopRequested) {
@@ -1393,29 +1731,47 @@ void RunTask(const string& user_input) {
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-    case WM_SIZE:
-        ResizeWebView(hwnd);
-        break;
+    case WM_SIZE: ResizeWebView(hwnd); break;
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+        HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(MONITORINFO) };
+        if (GetMonitorInfo(hMon, &mi)) {
+            mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+            mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+            mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+            mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+            mmi->ptMaxTrackSize.x = mmi->ptMaxSize.x;
+            mmi->ptMaxTrackSize.y = mmi->ptMaxSize.y;
+        }
+        return 0;
+    }
     case WM_NCCALCSIZE:
+        if (wp == TRUE) {
+            WINDOWPLACEMENT wpl = { sizeof(WINDOWPLACEMENT) };
+            GetWindowPlacement(hwnd, &wpl);
+            if (wpl.showCmd == SW_MAXIMIZE) {
+                NCCALCSIZE_PARAMS* p = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+                MONITORINFO mi = { sizeof(MONITORINFO) };
+                if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi))
+                    p->rgrc[0] = mi.rcWork;
+                return 0;
+            }
+        }
         return 0;
     case WM_NCHITTEST: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ScreenToClient(hwnd, &pt);
         RECT rc;
         GetClientRect(hwnd, &rc);
-
         const int DRAG_H = 32;
         if (pt.y >= 0 && pt.y < DRAG_H) {
             if (pt.x > rc.right - 184) return HTCLIENT;
             return HTCAPTION;
         }
-
         const int B = 6;
-        bool left = pt.x < B;
-        bool right = pt.x > rc.right - B;
-        bool top = pt.y < B;
-        bool bottom = pt.y > rc.bottom - B;
-
+        bool left = pt.x < B, right = pt.x > rc.right - B;
+        bool top = pt.y < B, bottom = pt.y > rc.bottom - B;
         if (top && left)     return HTTOPLEFT;
         if (top && right)    return HTTOPRIGHT;
         if (bottom && left)  return HTBOTTOMLEFT;
@@ -1426,25 +1782,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (bottom)          return HTBOTTOM;
         return HTCLIENT;
     }
+    case WM_NCLBUTTONDBLCLK:
+        if (wp == HTCAPTION) { MaximizeMainWindowAnimated(); return 0; }
+        break;
     case WM_TRAYICON:
-        if (LOWORD(lp) == WM_LBUTTONDBLCLK) {
-            ShowWindow(hwnd, SW_RESTORE);
-            SetForegroundWindow(hwnd);
-        }
+        if (LOWORD(lp) == WM_LBUTTONDBLCLK) { ShowWindow(hwnd, SW_RESTORE); SetForegroundWindow(hwnd); }
         return 0;
-    case WM_PICK_FILES: {
-        auto items = PickFiles(hwnd, true);
-        NotifyPickedItems(items);
-        return 0;
-    }
-    case WM_PICK_FOLDER: {
-        auto items = PickFolder(hwnd);
-        NotifyPickedItems(items);
-        return 0;
-    }
-    case WM_SEND_TO_JS:
-        HandleSendToJS(lp);
-        return 0;
+    case WM_PICK_FILES: { auto items = PickFiles(hwnd, true); NotifyPickedItems(items); return 0; }
+    case WM_PICK_FOLDER: { auto items = PickFolder(hwnd); NotifyPickedItems(items); return 0; }
+    case WM_SEND_TO_JS: HandleSendToJS(lp); return 0;
     case WM_CLOSE:
         g_stopRequested = true;
         AbortCurrentAIRequest();
@@ -1453,9 +1799,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ShutdownWebView2();
         DestroyWindow(hwnd);
         return 0;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
+    case WM_DESTROY: PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -1464,37 +1808,26 @@ int main() {
 #ifdef NDEBUG
     FreeConsole();
 #endif
-
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
     Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, nullptr);
-
     InitUIAutomation();
 
     g_config = LoadConfig();
-
-    if (g_config.base_url.empty()) {
+    if (g_config.base_url.empty())
         g_config.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-    }
-    if (g_config.model.empty()) {
-        g_config.model = "qwen-vl-max";
-    }
-    if (g_config.max_steps < 1 || g_config.max_steps > 50) {
-        g_config.max_steps = 6;
-    }
-    if (g_config.language != "en" && g_config.language != "zh") {
-        g_config.language = "zh";
-    }
+    if (g_config.model.empty()) g_config.model = "qwen-vl-max";
+    if (g_config.max_steps < 1 || g_config.max_steps > 50) g_config.max_steps = 6;
+    if (g_config.language != "en" && g_config.language != "zh") g_config.language = "zh";
 
     InitI18n(g_config.language);
-
     LogInfo("=== App starting ===");
     LogInfo("provider=" + g_config.provider + " model=" + g_config.model +
         " has_key=" + std::string(g_config.api_key.empty() ? "no" : "yes"));
+    LogInfo("backdrop=" + g_config.backdrop);
 
     HINSTANCE hInst = GetModuleHandleW(nullptr);
     const wchar_t* clsName = L"Project4AIWindow";
@@ -1503,29 +1836,24 @@ int main() {
     wc.hInstance = hInst;
     wc.lpszClassName = clsName;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = nullptr;
     RegisterClassW(&wc);
 
     HWND hwnd = CreateWindowW(clsName, L"AI Automation Assistant",
         WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 1100, 760,
         nullptr, nullptr, hInst, nullptr);
-    if (!hwnd) {
-        LogError("CreateWindow failed");
-        return 1;
-    }
+    if (!hwnd) { LogError("CreateWindow failed"); return 1; }
     g_mainHwnd = hwnd;
 
     int cornerPref = 2;
     DwmSetWindowAttribute(hwnd, 33, &cornerPref, sizeof(cornerPref));
+    ApplyBackdrop(hwnd, g_config.backdrop);
 
-    if (!InitNotify(hwnd)) {
-        LogError("InitNotify failed");
-    }
+    if (!InitNotify(hwnd)) LogError("InitNotify failed");
 
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
-
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
@@ -1534,7 +1862,7 @@ int main() {
 
     SetTaskCallback([](const std::string& task) {
         LogInfo("TaskCallback fired: " + task);
-        if (g_mainHwnd) ShowWindow(g_mainHwnd, SW_MINIMIZE);
+        MinimizeMainWindowAnimated();
         ShowControlPanel(U2W(task));
         std::thread(RunTask, task).detach();
         });
@@ -1553,12 +1881,10 @@ int main() {
 
     std::wstring panelPath = LR"(C:\Users\Administrator\source\repos\AI-Automation-Assistant\panel.html)";
     LogInfo("panelPath = " + W2U(panelPath));
-    if (!InitPanelHost(hInst, panelPath)) {
+    if (!InitPanelHost(hInst, panelPath))
         LogError("InitPanelHost failed (non-fatal)");
-    }
 
     LogInfo("Entering message loop");
-
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);

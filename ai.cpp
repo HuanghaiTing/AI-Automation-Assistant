@@ -10,10 +10,8 @@
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "gdiplus.lib")
 
-// ★ 从 main.cpp 暴露
 extern bool IsStopRequested();
 
-// ★ 当前正在进行的请求 handle，用于中断
 static std::atomic<HINTERNET> g_currentRequest{ nullptr };
 
 void AbortCurrentAIRequest() {
@@ -177,6 +175,45 @@ static void ParseUrl(const std::string& url, std::wstring& host, std::wstring& p
     path = U2WLocal(p);
 }
 
+// ========== 根据模型自动选择 max_tokens（已按各服务商真实上限） ==========
+static int PickMaxTokens(const std::string& model) {
+    std::string m = model;
+    for (auto& c : m) c = tolower(c);
+
+    // ---- DashScope (通义千问) ----
+    if (m.find("qwen-vl-max") != std::string::npos) return 4096;
+    if (m.find("qwen-vl-plus") != std::string::npos) return 2048;
+    if (m.find("qwen-vl") != std::string::npos) return 2048;
+    if (m.find("qwen-max") != std::string::npos) return 4096;
+    if (m.find("qwen-plus") != std::string::npos) return 2048;
+    if (m.find("qwen") != std::string::npos) return 2048;
+
+    // ---- 智谱 GLM（★ 真实上限比 OpenAI 风格小） ----
+    if (m.find("glm-4v-plus") != std::string::npos) return 2048;    // 上限 2048
+    if (m.find("glm-4v-flash") != std::string::npos) return 1024;   // 上限 1024
+    if (m.find("glm-4v") != std::string::npos) return 1024;         // 上限 1024
+    if (m.find("glm-4-plus") != std::string::npos) return 4096;     // 上限 4096
+    if (m.find("glm-4-flash") != std::string::npos) return 4096;
+    if (m.find("glm-4") != std::string::npos) return 2048;
+    if (m.find("glm") != std::string::npos) return 1024;            // 保守值
+
+    // ---- OpenAI ----
+    if (m.find("gpt-4o") != std::string::npos) return 16384;
+    if (m.find("gpt-4-turbo") != std::string::npos) return 4096;
+    if (m.find("gpt-4") != std::string::npos) return 4096;
+    if (m.find("gpt-3.5") != std::string::npos) return 4096;
+
+    // ---- DeepSeek ----
+    if (m.find("deepseek") != std::string::npos) return 4096;
+
+    // ---- Moonshot Kimi ----
+    if (m.find("moonshot") != std::string::npos) return 8192;
+    if (m.find("kimi") != std::string::npos) return 8192;
+
+    // 未知模型：保守值
+    return 1024;
+}
+
 // ========== Call AI ==========
 std::string CallAIVision(const std::string& prompt, const std::string& imageBase64) {
     if (g_config.api_key.empty()) return "ERROR: AUTH_FAILED";
@@ -185,6 +222,8 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
 
     std::wstring host, path;
     ParseUrl(g_config.base_url, host, path);
+
+    int maxTokens = PickMaxTokens(g_config.model);
 
     json body;
     try {
@@ -197,7 +236,8 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
         body = {
             {"model", g_config.model},
             {"messages", {{{"role", "user"}, {"content", content}}}},
-            {"temperature", 0}
+            {"temperature", 0},
+            {"max_tokens", maxTokens}   // ★
         };
     }
     catch (...) { return "ERROR: build request failed"; }
@@ -207,6 +247,7 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
     std::cout << "[AI] === Request ===" << std::endl;
     std::cout << "[AI] host=" << W2ULocal(host) << std::endl;
     std::cout << "[AI] model=" << g_config.model << std::endl;
+    std::cout << "[AI] max_tokens=" << maxTokens << std::endl;
     std::cout << "[AI] api_key_len=" << g_config.api_key.size() << std::endl;
     std::cout << "[AI] prompt_len=" << prompt.size()
         << " image_b64_len=" << imageBase64.size()
@@ -217,8 +258,7 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return "ERROR: WinHttpOpen failed";
 
-    // ★ receive 超时 15s
-    WinHttpSetTimeouts(hSession, 5000, 5000, 10000, 15000);
+    WinHttpSetTimeouts(hSession, 5000, 5000, 10000, 30000);
 
     HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(),
         INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -236,7 +276,6 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
         return "ERROR: WinHttpOpenRequest failed";
     }
 
-    // ★ 注册当前请求，以便 AbortCurrentAIRequest 中断
     g_currentRequest.store(hRequest);
 
     std::wstring headers = L"Content-Type: application/json\r\n";
@@ -279,7 +318,6 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
     DWORD size = 0;
     do {
         if (IsStopRequested()) {
-            std::cout << "[AI] aborted during read" << std::endl;
             g_currentRequest.store(nullptr);
             WinHttpCloseHandle(hRequest);
             WinHttpCloseHandle(hConnect);
@@ -359,7 +397,7 @@ std::string CallAIVision(const std::string& prompt, const std::string& imageBase
         if (!resp.contains("choices") || resp["choices"].empty())
             return "ERROR: NO_CHOICES";
         std::string content = resp["choices"][0]["message"]["content"].get<std::string>();
-        std::cout << "[AI] reply=" << content << std::endl;
+        std::cout << "[AI] reply_len=" << content.size() << std::endl;
         return content;
     }
     catch (...) { return "ERROR: PARSE_FAILED"; }

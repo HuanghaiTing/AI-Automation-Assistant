@@ -15,6 +15,8 @@
 
 #include "C:\Users\Administrator\Downloads\json.hpp"
 
+#pragma comment(lib, "user32.lib")
+
 using namespace Microsoft::WRL;
 using json = nlohmann::json;
 
@@ -28,6 +30,10 @@ using json = nlohmann::json;
 #define WM_SEND_TO_JS  (WM_USER + 102)
 #endif
 
+// ★ 前置声明：main.cpp 里的 ApplyBackdrop
+extern void ApplyBackdrop(HWND hwnd, const std::string& mode);
+
+// ========== 全局状态 ==========
 static HWND g_hwnd = nullptr;
 static ComPtr<ICoreWebView2Controller> g_controller;
 static ComPtr<ICoreWebView2>           g_webview;
@@ -40,6 +46,7 @@ std::vector<std::string> g_attachedPaths;
 static std::vector<std::string> g_logQueue;
 static std::mutex g_logQueueMutex;
 
+// ========== UTF-8 / Wide 转换 ==========
 static std::string WideToUtf8(const std::wstring& w) {
     if (w.empty()) return "";
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -81,6 +88,11 @@ static std::string JsonEscape(const std::string& s) {
 }
 
 void PostToJS(const std::string& jsonUtf8) {
+    if (g_hwnd && GetCurrentThreadId() != GetWindowThreadProcessId(g_hwnd, nullptr)) {
+        PostToJSFromAnyThread(jsonUtf8);
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(g_postMutex);
     if (!g_webview) return;
     std::wstring w = Utf8ToWide(jsonUtf8);
@@ -147,10 +159,9 @@ void NotifyPickedItems(const std::vector<PickedItem>& items) {
     json resp;
     resp["type"] = "pickedItems";
     resp["items"] = arr;
-    PostToJS(resp.dump());
+    PostToJSFromAnyThread(resp.dump());
 }
 
-// ★ 绑定 g_bridge 到 WebView2
 static void BindBridgeCallbacks() {
     g_bridge.onDone = [](bool success, const std::string& reason) {
         json j;
@@ -187,7 +198,6 @@ static void BindBridgeCallbacks() {
         };
 
     g_bridge.onLog = [](LogLevel lv, const std::string& msg) {
-        // 通常不用
         };
 }
 
@@ -221,12 +231,22 @@ static HRESULT OnWebMessageReceived(ICoreWebView2*,
             LogInfo("Image attached: " + name + " (" + std::to_string(b64.size()) + " bytes)");
         }
         else if (type == "winMin") {
-            if (g_hwnd) ShowWindow(g_hwnd, SW_MINIMIZE);
+            if (g_hwnd) {
+                AnimateWindow(g_hwnd, 150, AW_HIDE | AW_BLEND);
+                ShowWindow(g_hwnd, SW_MINIMIZE);
+            }
         }
         else if (type == "winMax") {
             if (g_hwnd) {
-                if (IsZoomed(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
-                else ShowWindow(g_hwnd, SW_MAXIMIZE);
+                if (IsZoomed(g_hwnd)) {
+                    ShowWindow(g_hwnd, SW_RESTORE);
+                    AnimateWindow(g_hwnd, 180, AW_ACTIVATE | AW_BLEND);
+                }
+                else {
+                    AnimateWindow(g_hwnd, 120, AW_HIDE | AW_BLEND);
+                    ShowWindow(g_hwnd, SW_MAXIMIZE);
+                    AnimateWindow(g_hwnd, 150, AW_ACTIVATE | AW_BLEND);
+                }
             }
         }
         else if (type == "winClose") {
@@ -263,17 +283,28 @@ static HRESULT OnWebMessageReceived(ICoreWebView2*,
             resp["model"] = g_config.model;
             resp["max_steps"] = g_config.max_steps;
             resp["language"] = g_config.language;
+            resp["backdrop"] = g_config.backdrop;   // ★
             PostToJS(resp.dump());
         }
         else if (type == "saveConfig") {
+            std::string oldBackdrop = g_config.backdrop;
+
             g_config.provider = j.value("provider", g_config.provider);
             g_config.api_key = j.value("api_key", g_config.api_key);
             g_config.base_url = j.value("base_url", g_config.base_url);
             g_config.model = j.value("model", g_config.model);
             g_config.max_steps = j.value("max_steps", g_config.max_steps);
             g_config.language = j.value("language", g_config.language);
+            g_config.backdrop = j.value("backdrop", g_config.backdrop);   // ★
+
             bool ok = SaveConfig(g_config);
             InitI18n(g_config.language);
+
+            // ★ 如果 backdrop 变了，重新应用材质
+            if (oldBackdrop != g_config.backdrop && g_hwnd) {
+                ApplyBackdrop(g_hwnd, g_config.backdrop);
+            }
+
             LogInfo("Config saved (ok=" + std::string(ok ? "1" : "0") + ")");
             json ack;
             ack["type"] = "configSaved";
@@ -290,7 +321,6 @@ static HRESULT OnWebMessageReceived(ICoreWebView2*,
 bool InitWebView2(HWND hwnd, const std::wstring& htmlPath) {
     g_hwnd = hwnd;
 
-    // ★ 绑定回调
     BindBridgeCallbacks();
 
     wchar_t temp[MAX_PATH];
@@ -299,11 +329,17 @@ bool InitWebView2(HWND hwnd, const std::wstring& htmlPath) {
 
     auto envCallback = Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
         [htmlPath](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
-            if (FAILED(hr) || !env) return S_OK;
+            if (FAILED(hr) || !env) {
+                LogError("CreateCoreWebView2Environment failed");
+                return S_OK;
+            }
             env->CreateCoreWebView2Controller(g_hwnd,
                 Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                     [htmlPath](HRESULT hr2, ICoreWebView2Controller* controller) -> HRESULT {
-                        if (FAILED(hr2) || !controller) return S_OK;
+                        if (FAILED(hr2) || !controller) {
+                            LogError("CreateCoreWebView2Controller failed");
+                            return S_OK;
+                        }
                         g_controller = controller;
                         controller->get_CoreWebView2(&g_webview);
 
@@ -316,6 +352,13 @@ bool InitWebView2(HWND hwnd, const std::wstring& htmlPath) {
                         settings->put_AreDefaultContextMenusEnabled(FALSE);
                         settings->put_IsStatusBarEnabled(FALSE);
                         settings->put_AreDevToolsEnabled(TRUE);
+
+                        // ★ 让 WebView2 背景透明，DWM 材质才能透出来
+                        ComPtr<ICoreWebView2Controller2> ctrl2;
+                        if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&ctrl2)))) {
+                            COREWEBVIEW2_COLOR bg = { 0, 0, 0, 0 };
+                            ctrl2->put_DefaultBackgroundColor(bg);
+                        }
 
                         g_webview->add_WebMessageReceived(
                             Callback<ICoreWebView2WebMessageReceivedEventHandler>(

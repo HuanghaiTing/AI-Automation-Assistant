@@ -18,7 +18,6 @@
 using json = nlohmann::json;
 using namespace Microsoft::WRL;
 
-// ========== 全局状态 ==========
 static HWND  g_panelHwnd = nullptr;
 static HINSTANCE g_panelInst = nullptr;
 static std::wstring g_panelHtmlPath;
@@ -28,12 +27,10 @@ static std::mutex g_panelMutex;
 static std::atomic<bool> g_panelReady{ false };
 static std::atomic<bool> g_panelVisible{ false };
 
-// 面板逻辑尺寸
 static const int PANEL_WIDTH = 400;
 static const int PANEL_HEIGHT = 640;
 static const int PANEL_MARGIN = 16;
 
-// ========== UTF-8 / Wide 转换 ==========
 static std::string WideToUtf8Local(const std::wstring& w) {
     if (w.empty()) return "";
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -52,11 +49,9 @@ static std::wstring Utf8ToWideLocal(const std::string& s) {
     return w;
 }
 
-// ========== 前向声明 ==========
 extern void RequestStopFromPanel();
 
-// ========== DPI 换算 + put_Bounds ==========
-static void PutPanelBounds() {
+static void UpdatePanelBounds() {
     if (!g_panelController) return;
     if (!g_panelHwnd) return;
 
@@ -79,7 +74,6 @@ static void PutPanelBounds() {
     g_panelController->put_Bounds(bounds);
 }
 
-// ========== WebView2 消息处理 ==========
 static HRESULT OnPanelMessage(ICoreWebView2*,
     ICoreWebView2WebMessageReceivedEventArgs* args)
 {
@@ -114,20 +108,18 @@ static HRESULT OnPanelMessage(ICoreWebView2*,
     return S_OK;
 }
 
-// ========== 面板窗口过程 ==========
 static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_SIZE:
-        PutPanelBounds();
+        UpdatePanelBounds();
         break;
 
     case WM_PAINT: {
-        // 兜底：先画深色背景（HTML 加载前）
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc;
         GetClientRect(hwnd, &rc);
-        HBRUSH hbr = CreateSolidBrush(RGB(32, 32, 36));
+        HBRUSH hbr = CreateSolidBrush(RGB(28, 28, 30));
         FillRect(hdc, &rc, hbr);
         DeleteObject(hbr);
         EndPaint(hwnd, &ps);
@@ -138,7 +130,7 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
         HDC hdc = (HDC)wp;
         RECT rc;
         GetClientRect(hwnd, &rc);
-        HBRUSH hbr = CreateSolidBrush(RGB(32, 32, 36));
+        HBRUSH hbr = CreateSolidBrush(RGB(28, 28, 30));
         FillRect(hdc, &rc, hbr);
         DeleteObject(hbr);
         return 1;
@@ -157,20 +149,17 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
     }
 
     case WM_CLOSE:
-        ShowWindow(hwnd, SW_HIDE);
-        g_panelVisible = false;
+        HideControlPanel();
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// ========== 计算面板位置（统一用窗口 DPI） ==========
 static RECT CalcPanelRect() {
     RECT workArea;
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
 
-    // ★ 用窗口 DPI，保证和 WebView2 Bounds 一致
-    UINT dpi = g_panelHwnd ? GetDpiForWindow(g_panelHwnd) : GetDpiForSystem();
+    UINT dpi = GetDpiForSystem();
     if (dpi == 0) dpi = 96;
     float scale = (float)dpi / 96.0f;
 
@@ -191,7 +180,6 @@ static RECT CalcPanelRect() {
     return r;
 }
 
-// ========== 初始化 ==========
 bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
     g_panelInst = hInst;
     g_panelHtmlPath = htmlPath;
@@ -206,7 +194,7 @@ bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
     wc.hInstance = hInst;
     wc.lpszClassName = clsName;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)CreateSolidBrush(RGB(32, 32, 36));
+    wc.hbrBackground = (HBRUSH)CreateSolidBrush(RGB(28, 28, 30));
     if (!RegisterClassW(&wc)) {
         DWORD err = GetLastError();
         if (err != ERROR_CLASS_ALREADY_EXISTS) {
@@ -217,7 +205,7 @@ bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
 
     RECT r = CalcPanelRect();
 
-    // ★ 不加 WS_EX_LAYERED（尺寸对齐，避免右侧/下方露边框）
+    // ★ WS_EX_LAYERED 支持滑动时的不透明控制
     g_panelHwnd = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         clsName, L"AI Control Center",
@@ -230,7 +218,6 @@ bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
         return false;
     }
 
-    // Win11 圆角
     int cornerPref = 2;
     DwmSetWindowAttribute(g_panelHwnd, 33, &cornerPref, sizeof(cornerPref));
 
@@ -261,7 +248,7 @@ bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
                         controller->get_CoreWebView2(&g_panelWebView);
                         LogInfo("[PANEL] Controller ready");
 
-                        PutPanelBounds();
+                        UpdatePanelBounds();
 
                         ComPtr<ICoreWebView2Settings> settings;
                         g_panelWebView->get_Settings(&settings);
@@ -269,10 +256,9 @@ bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
                         settings->put_IsStatusBarEnabled(FALSE);
                         settings->put_AreDevToolsEnabled(TRUE);
 
-                        // 背景不透明（与 HTML 里的 #202024 一致）
                         ComPtr<ICoreWebView2Controller2> ctrl2;
                         if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&ctrl2)))) {
-                            COREWEBVIEW2_COLOR bg = { 255, 32, 32, 36 };
+                            COREWEBVIEW2_COLOR bg = { 0, 0, 0, 0 };
                             ctrl2->put_DefaultBackgroundColor(bg);
                         }
 
@@ -315,31 +301,46 @@ bool InitPanelHost(HINSTANCE hInst, const std::wstring& htmlPath) {
     return true;
 }
 
-// ========== 显示 / 隐藏 ==========
+// ★ 面板从右侧滑入
 void ShowControlPanel(const std::wstring& taskText) {
     if (!g_panelHwnd) {
         LogError("[PANEL] ShowControlPanel: no hwnd");
         return;
     }
 
-    RECT r = CalcPanelRect();
+    RECT workArea;
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+
+    UINT dpi = GetDpiForSystem();
+    if (dpi == 0) dpi = 96;
+    float scale = (float)dpi / 96.0f;
+
+    int wPx = (int)(PANEL_WIDTH * scale);
+    int hPx = (int)(PANEL_HEIGHT * scale);
+    int mPx = (int)(PANEL_MARGIN * scale);
+
+    int targetX = workArea.right - wPx - mPx;
+    int startX = workArea.right;   // 从屏幕外滑入
+    int y = workArea.top + mPx;
+
+    if (targetX < 0) targetX = 0;
+
+    // 先设置到屏幕外
     SetWindowPos(g_panelHwnd, HWND_TOPMOST,
-        r.left, r.top, r.right - r.left, r.bottom - r.top,
+        startX, y, wPx, hPx,
         SWP_SHOWWINDOW | SWP_NOACTIVATE);
-    BringWindowToTop(g_panelHwnd);
 
-    // ★ 强制触发 WM_SIZE，让 WebView2 重设 Bounds
-    SetWindowPos(g_panelHwnd, nullptr, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-
-    if (g_panelController) {
-        g_panelController->put_IsVisible(FALSE);
-        g_panelController->put_IsVisible(TRUE);
-        PutPanelBounds();
+    // ★ 滑动动画：从 startX 到 targetX
+    const int STEPS = 18;
+    for (int i = 0; i <= STEPS; i++) {
+        int x = startX + (targetX - startX) * i / STEPS;
+        SetWindowPos(g_panelHwnd, HWND_TOPMOST,
+            x, y, wPx, hPx,
+            SWP_NOACTIVATE);
+        Sleep(8);
     }
 
-    InvalidateRect(g_panelHwnd, nullptr, TRUE);
-    UpdateWindow(g_panelHwnd);
+    UpdatePanelBounds();
 
     json j;
     j["type"] = "panelShow";
@@ -350,13 +351,38 @@ void ShowControlPanel(const std::wstring& taskText) {
     LogInfo("[PANEL] shown");
 }
 
+// ★ 面板向右滑出
 void HideControlPanel() {
     if (!g_panelHwnd) return;
+
+    RECT workArea;
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+
+    UINT dpi = GetDpiForSystem();
+    if (dpi == 0) dpi = 96;
+    float scale = (float)dpi / 96.0f;
+
+    int wPx = (int)(PANEL_WIDTH * scale);
+    int hPx = (int)(PANEL_HEIGHT * scale);
+    int mPx = (int)(PANEL_MARGIN * scale);
+
+    int startX = workArea.right - wPx - mPx;
+    int endX = workArea.right;   // 滑到屏幕外
+    int y = workArea.top + mPx;
+
+    const int STEPS = 18;
+    for (int i = 0; i <= STEPS; i++) {
+        int x = startX + (endX - startX) * i / STEPS;
+        SetWindowPos(g_panelHwnd, HWND_TOPMOST,
+            x, y, wPx, hPx,
+            SWP_NOACTIVATE);
+        Sleep(8);
+    }
+
     ShowWindow(g_panelHwnd, SW_HIDE);
     g_panelVisible = false;
 }
 
-// ========== PostToPanel（不打日志，避免递归） ==========
 void PostToPanel(const std::string& jsonUtf8) {
     if (!g_panelReady) return;
     if (!g_panelWebView) return;

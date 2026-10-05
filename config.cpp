@@ -11,7 +11,6 @@ using json = nlohmann::json;
 
 AppConfig g_config;
 
-// ========== Absolute path ==========
 static const wchar_t* CONFIG_PATH_W = LR"(C:\Users\Administrator\Desktop\1\config.json)";
 
 static std::string WideToUtf8(const std::wstring& w) {
@@ -55,8 +54,9 @@ static void WriteDefaultFile() {
     j["api_key"] = "";
     j["base_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     j["model"] = "qwen-vl-max";
-    j["max_steps"] = 6;   // ★ 12 → 6
+    j["max_steps"] = 6;
     j["language"] = "zh";
+    j["backdrop"] = "mica";
 
     std::ofstream f(path);
     if (f.is_open()) {
@@ -106,6 +106,7 @@ AppConfig LoadConfig() {
         cfg.model = j.value("model", cfg.model);
         cfg.max_steps = j.value("max_steps", cfg.max_steps);
         cfg.language = j.value("language", cfg.language);
+        cfg.backdrop = j.value("backdrop", cfg.backdrop);
 
         std::cout << "[CONFIG] Loaded: provider=" << cfg.provider
             << " model=" << cfg.model
@@ -113,7 +114,8 @@ AppConfig LoadConfig() {
             << " has_key=" << (cfg.api_key.empty() ? "no" : "yes")
             << " key_len=" << cfg.api_key.size()
             << " max_steps=" << cfg.max_steps
-            << " lang=" << cfg.language << std::endl;
+            << " lang=" << cfg.language
+            << " backdrop=" << cfg.backdrop << std::endl;
     }
     catch (const std::exception& e) {
         std::cout << "[CONFIG] Parse error: " << e.what() << std::endl;
@@ -135,6 +137,7 @@ bool SaveConfig(const AppConfig& cfg) {
     j["model"] = cfg.model;
     j["max_steps"] = cfg.max_steps;
     j["language"] = cfg.language;
+    j["backdrop"] = cfg.backdrop;
 
     std::string dump = j.dump(2);
 

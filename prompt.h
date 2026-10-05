@@ -10,6 +10,7 @@ struct PromptContext {
     std::string openWindows;
     std::string language = "zh";
     std::vector<std::string> attachedPaths;
+    std::string desktopFiles;   // ★ 新增：桌面文件列表
 };
 
 std::string BuildPrompt(const PromptContext& ctx);

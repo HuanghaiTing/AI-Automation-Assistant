@@ -25,7 +25,11 @@ std::string ModuleTaskContext(const PromptContext& ctx) {
     ss << "  - Create file   -> CREATEFILE:<ext>;;;<name>;;;<content>\n";
     ss << "  - Create Excel  -> CREATEEXCEL:<name>;;;<row1>;;;<row2>...\n";
     ss << "  - Create Word   -> CREATEWORD:<name>;;;<p1>;;;<p2>...\n";
-    ss << "  - Interact UI   -> CLICK the right element\n";
+    ss << "  - Modify file   -> EDITFILE / EDITEXCEL / EDITWORD (with FULL PATH)\n";
+    ss << "  - Append to file -> APPENDFILE / APPENDEXCEL / APPENDWORD\n";
+    ss << "  - Open existing -> OPENFILE:<path>\n";
+    ss << "  - Read file     -> READFILE:<path>\n";
+    ss << "  - List files    -> LISTFILE:<ext>\n";
     ss << "  - Done          -> DONE\n";
     ss << "Start with a REAL action. Do NOT WAIT on step 1.\n";
     ss << "If the task is a SINGLE simple action, reply DONE right after it succeeds.\n";
@@ -50,6 +54,10 @@ std::string ModuleStateSnapshot(const PromptContext& ctx) {
     if (ctx.openWindows.empty()) ss << "  (none)\n";
     else ss << ctx.openWindows;
 
+    ss << "\n[Desktop Files]:\n";
+    if (ctx.desktopFiles.empty()) ss << "  (none)\n";
+    else ss << ctx.desktopFiles;
+
     ss << "=== END STATE ===\n\n";
     return ss.str();
 }
@@ -70,21 +78,43 @@ std::string ModuleCommandContract(const PromptContext& ctx) {
     ss << "  KEY:<key>                    - Press a key (win+r, ctrl+s, enter)\n";
     ss << "  WAIT:<sec>                   - Wait N seconds\n";
     ss << "  CREATEFOLDER:<name>          - Create folder on Desktop\n";
-    ss << "  CREATEFILE:<ext>;;;<name>;;;<content>  - Create txt/bat on Desktop\n";
+    ss << "\n";
+    ss << "  CREATEFILE:<ext>;;;<name>;;;<content>\n";
     ss << "       ext: txt or bat\n";
-    ss << "       separator: ';;;' (three semicolons)\n";
-    ss << "  CREATEEXCEL:<name>;;;<row1>;;;<row2>;;;...  - Create Excel on Desktop\n";
-    ss << "       separator between rows: ';;;'\n";
-    ss << "       separator between cells: '|'\n";
+    ss << "       separator: ';;;'\n";
+    ss << "       YOU MUST WRITE the content yourself if user asked for text.\n";
+    ss << "       Example: user says 'write 200-char note about cats'\n";
+    ss << "         -> CREATEFILE:txt;;;cat_note;;;Cats are wonderful pets...\n";
+    ss << "         NOT: CREATEFILE:txt;;;cat_note;;;write 200-char note   <-- WRONG\n";
+    ss << "\n";
+    ss << "  CREATEEXCEL:<name>;;;<row1>;;;<row2>;;;...\n";
+    ss << "       Cells in a row: separated by '|'\n";
     ss << "       First row = header\n";
-    ss << "       Example: CREATEEXCEL:report;;;Name|Age;;;Alice|30;;;Bob|25\n";
-    ss << "  CREATEWORD:<name>;;;<p1>;;;<p2>;;;...  - Create Word on Desktop\n";
+    ss << "       YOU MUST FILL the data yourself if user described it.\n";
+    ss << "       Example: 'make excel with 3 students and grades'\n";
+    ss << "         -> CREATEEXCEL:grades;;;Name|Math|English;;;Alice|90|85;;;Bob|88|92;;;Carol|75|80\n";
+    ss << "\n";
+    ss << "  CREATEWORD:<name>;;;<p1>;;;<p2>;;;...\n";
     ss << "       separator between paragraphs: ';;;'\n";
-    ss << "       Example: CREATEWORD:notes;;;Hello world;;;Second paragraph\n";
+    ss << "       *** YOU ARE THE WRITER. Generate the ACTUAL Chinese text yourself. ***\n";
+    ss << "       The user gives the TOPIC; you produce the CONTENT.\n";
+    ss << "       Example: user says 'write 300-char essay on growth'\n";
+    ss << "         -> CREATEWORD:growth_essay;;;成长是一场漫长而美丽的旅程。每个人都会经历成长，但方式各不相同。\n";
+    ss << "         NOT: CREATEWORD:growth_essay;;;write 300-char essay   <-- WRONG!\n";
+    ss << "\n";
+    ss << "  LISTFILE:<ext>               - List files on Desktop (e.g. LISTFILE:txt)\n";
+    ss << "  READFILE:<path>              - Read text file content (full path)\n";
+    ss << "  OPENFILE:<path>              - Open existing file with default app\n";
+    ss << "  EDITFILE:<path>;;;<content>  - Overwrite txt/bat file content\n";
+    ss << "  EDITEXCEL:<path>;;;<row1>;;;<row2>;;;...  - Overwrite Excel content\n";
+    ss << "  EDITWORD:<path>;;;<p1>;;;<p2>;;;...  - Overwrite Word content\n";
+    ss << "  APPENDFILE:<path>;;;<content>  - Append content to txt/bat\n";
+    ss << "  APPENDEXCEL:<path>;;;<row>      - Append a row to Excel\n";
+    ss << "  APPENDWORD:<path>;;;<paragraph> - Append a paragraph to Word\n";
     ss << "  CHAT:<text>                  - Reply to the user with TEXT (for questions)\n";
     ss << "  DONE                         - Task complete\n\n";
     ss << "CLICK_INPUT valid labels ONLY:\n";
-    ss << "  address | url | search | \xE6\x90\x9C\xE7\xB4\xA2 | \xE8\xBE\x93\xE5\x85\xA5\xE6\xA1\x86\n";
+    ss << "  address | url | search | 搜索 | 输入框\n";
     ss << "=== END COMMAND FORMAT ===\n\n";
     return ss.str();
 }
@@ -101,7 +131,7 @@ std::string ModuleHardRules(const PromptContext& ctx) {
     ss << "5. On STEP 1, do NOT WAIT. Start with OPEN / CLICK / CREATEFILE.\n";
     ss << "6. CLICK_INPUT takes ONLY a valid label (see list).\n";
     ss << "7. CLICK target must be SHORT (<20 chars). Never URL or page title.\n";
-    ss << "8. For file ops, use FULL PATH from [ATTACHED FILES/FOLDERS].\n";
+    ss << "8. For file ops, use FULL PATH from [ATTACHED FILES/FOLDERS] or [Desktop Files].\n";
     ss << "9. If screenshot shows task DONE, reply DONE.\n";
     ss << "10. CREATEFILE uses ';;;' as separator (NOT '|').\n";
     ss << "11. After CREATEFILE / CREATEFOLDER succeeds, reply DONE next step.\n";
@@ -109,17 +139,37 @@ std::string ModuleHardRules(const PromptContext& ctx) {
     ss << "13. NEVER write '@echo off' as content - the system adds it automatically.\n";
     ss << "14. SINGLE-ACTION task: after the action succeeds, reply DONE immediately.\n";
     ss << "15. Do NOT add steps the user didn't ask for.\n";
-    ss << "16. '\xE6\x89\x93\xE5\xBC\x80\xE6\xB5\x8F\xE8\xA7\x88\xE5\x99\xA8' / 'open browser' means ONLY open it.\n";
-    ss << "17. '\xE6\x89\x93\xE5\xBC\x80\xE8\xAE\xBE\xE7\xBD\xAE' / 'open settings' means ONLY open it.\n";
-    ss << "18. '\xE6\x89\x93\xE5\xBC\x80' + app name = OPEN: only.\n";
-    ss << "19. Excel -> CREATEEXCEL. First row = header. Cells sep by '|', rows by ';;;'.\n";
-    ss << "20. Word -> CREATEWORD. Paragraphs sep by ';;;'.\n";
-    ss << "21. Do NOT include '.xlsx' / '.docx' in the name.\n";
+    ss << "16. '打开浏览器' / 'open browser' means ONLY open it.\n";
+    ss << "17. '打开设置' / 'open settings' means ONLY open it.\n";
+    ss << "18. '打开' + app name = OPEN: only.\n";
+    ss << "19. Excel -> CREATEEXCEL / EDITEXCEL / APPENDEXCEL. NEVER CREATEFILE.\n";
+    ss << "20. Word -> CREATEWORD / EDITWORD / APPENDWORD. NEVER CREATEFILE.\n";
+    ss << "21. Do NOT include '.xlsx' / '.docx' in the name for CREATE commands.\n";
     ss << "22. Both go to Desktop, just like CREATEFILE.\n";
-    ss << "23. For Excel (.xlsx), ONLY use CREATEEXCEL. NEVER use CREATEFILE.\n";
-    ss << "24. For Word (.docx), ONLY use CREATEWORD. NEVER use CREATEFILE.\n";
-    ss << "25. If user asks a QUESTION (what / why / how / \xE4\xBB\x80\xE4\xB9\x88 / \xE4\xB8\xBA\xE4\xBB\x80\xE4\xB9\x88 / \xE6\x80\x8E\xE4\xB9\x88 / \xE5\xA6\x82\xE4\xBD\x95 / '?'), reply with 'CHAT:<answer>'.\n";
-    ss << "26. CHAT: is for questions only. Do NOT mix with commands.\n";
+    ss << "23. If user asks a QUESTION, reply with 'CHAT:<answer>'.\n";
+    ss << "24. CHAT: is for questions only. Do NOT mix with commands.\n";
+    ss << "25. When user says '修改' / '编辑' / 'modify' existing file:\n";
+    ss << "    a) First reply: LISTFILE:<ext>\n";
+    ss << "    b) Then use EDITFILE / EDITEXCEL / EDITWORD with FULL PATH\n";
+    ss << "26. When user says '打开' + existing file, use OPENFILE:<path>.\n";
+    ss << "27. When user wants to read a file, use READFILE:<path>.\n";
+    ss << "28. Use FULL PATH in EDIT / APPEND / OPENFILE / READFILE.\n";
+    ss << "29. *** YOU ARE THE WRITER ***\n";
+    ss << "    When the user gives a TOPIC (not the content), you MUST generate the actual text.\n";
+    ss << "    - 'write 600-word essay on X'  ->  CREATEWORD:name;;;<ACTUAL 600-char essay in Chinese>\n";
+    ss << "    - 'write a letter to Y'        ->  CREATEWORD:letter;;;<ACTUAL letter text>\n";
+    ss << "    - 'create a Word file about Z' ->  CREATEWORD:z;;;<ACTUAL content about Z>\n";
+    ss << "    NEVER copy the task description as content.\n";
+    ss << "    NEVER write 'write 600-word essay on X' as the content.\n";
+    ss << "    You are the author. Produce real Chinese text.\n";
+    ss << "30. *** TOO LONG? MULTI-STEP ***\n";
+    ss << "    If content > 1500 chars, split into 2-3 steps:\n";
+    ss << "      Step 1: CREATEWORD:<name>;;;<part 1: opening>\n";
+    ss << "      Step 2: APPENDWORD:<fullPath>;;;<part 2: body>\n";
+    ss << "      Step 3: APPENDWORD:<fullPath>;;;<part 3: ending>\n";
+    ss << "      Step 4: DONE\n";
+    ss << "    Same for Excel (APPENDEXCEL) and txt (APPENDFILE).\n";
+    ss << "31. NEVER include ';;;' inside content. It is the separator.\n";
     ss << "=== END HARD RULES ===\n\n";
     return ss.str();
 }
@@ -130,45 +180,39 @@ std::string ModuleAppHints(const PromptContext& ctx) {
     ss << "=== APP-SPECIFIC HINTS ===\n";
 
     ss << "[Browser]:\n";
-    ss << "  - ALWAYS use Edge (OPEN:edge), NEVER Chrome.\n";
-    ss << "  - 'open browser' = just OPEN:edge, then DONE.\n";
-
-    ss << "[Open website]:\n";
-    ss << "  - Chain: OPEN:edge -> CLICK_INPUT:address -> TYPE:<url> -> KEY:enter\n";
+    ss << "  - ALWAYS use Edge (OPEN:edge).\n";
 
     ss << "[Windows settings]:\n";
-    ss << "  - OPEN:ms-settings:          (settings home)\n";
-    ss << "  - OPEN:ms-settings:display   (display)\n";
-    ss << "  - OPEN:ms-settings:network   (network)\n";
-    ss << "  - OPEN:ms-settings:sound     (sound)\n";
-    ss << "  - Do NOT use OPEN:settings, use OPEN:ms-settings:\n";
+    ss << "  - OPEN:ms-settings:\n";
 
     ss << "[Open QQ]:\n";
     ss << "  - OPEN:qq\n";
 
-    ss << "[Create folder/file]:\n";
+    ss << "[Create file]:\n";
     ss << "  - Folder: CREATEFOLDER:<name>\n";
-    ss << "  - File:   CREATEFILE:<ext>;;;<name>;;;<content>  (ext = txt or bat)\n";
+    ss << "  - txt/bat: CREATEFILE:<ext>;;;<name>;;;<content>\n";
+    ss << "  - Excel: CREATEEXCEL:<name>;;;<row1>;;;<row2>...\n";
+    ss << "  - Word: CREATEWORD:<name>;;;<p1>;;;<p2>...\n";
 
-    ss << "[Create Excel]:\n";
-    ss << "  - CREATEEXCEL:<name>;;;<row1>;;;<row2>;;;...\n";
-    ss << "  - Cells in a row: separated by '|'\n";
-    ss << "  - Example: CREATEEXCEL:data;;;Name|Age;;;Alice|30\n";
+    ss << "[Modify / Append]:\n";
+    ss << "  - Modify txt/bat: EDITFILE:<fullPath>;;;<newContent>\n";
+    ss << "  - Append txt/bat: APPENDFILE:<fullPath>;;;<more>\n";
+    ss << "  - Modify Excel:   EDITEXCEL:<fullPath>;;;<rows>\n";
+    ss << "  - Append Excel:   APPENDEXCEL:<fullPath>;;;<newRow>\n";
+    ss << "  - Modify Word:    EDITWORD:<fullPath>;;;<paragraphs>\n";
+    ss << "  - Append Word:    APPENDWORD:<fullPath>;;;<newParagraph>\n";
+    ss << "  - Open existing:  OPENFILE:<fullPath>\n";
+    ss << "  - Read content:   READFILE:<fullPath>\n";
+    ss << "  - List files:     LISTFILE:<ext>\n";
 
-    ss << "[Create Word]:\n";
-    ss << "  - CREATEWORD:<name>;;;<p1>;;;<p2>;;;...\n";
-    ss << "  - Example: CREATEWORD:note;;;Hello world\n";
+    ss << "[Writing Tasks]:\n";
+    ss << "  - The user gives the TOPIC. You write the CONTENT.\n";
+    ss << "  - 'write essay about X' -> you compose the essay in Chinese.\n";
+    ss << "  - 'write letter to Y'   -> you compose the letter.\n";
 
     ss << "[BAT scripts]:\n";
     ss << "  - Content MUST be a REAL command.\n";
     ss << "  - Do NOT start with '@echo off'.\n";
-
-    ss << "[Save any file]:\n";
-    ss << "  - KEY:ctrl+s\n";
-
-    ss << "[Questions]:\n";
-    ss << "  - If user is asking a question, reply: CHAT:<answer>\n";
-    ss << "  - Do NOT open apps or take action for questions.\n";
 
     ss << "=== END APP HINTS ===\n\n";
     return ss.str();
@@ -178,20 +222,27 @@ std::string ModuleAppHints(const PromptContext& ctx) {
 std::string ModuleReferenceExamples(const PromptContext& ctx) {
     std::ostringstream ss;
     ss << "=== REFERENCE (do NOT copy) ===\n";
-    ss << "  'view IP'           -> KEY:win+r -> TYPE:ipconfig -> KEY:enter\n";
-    ss << "  'download java'     -> OPEN:edge -> CLICK_INPUT:address -> TYPE:java.com/download -> KEY:enter\n";
-    ss << "  'open QQ'           -> OPEN:qq -> DONE\n";
-    ss << "  'open browser'      -> OPEN:edge -> DONE\n";
-    ss << "  '\xE6\x89\x93\xE5\xBC\x80\xE6\xB5\x8F\xE8\xA7\x88\xE5\x99\xA8'      -> OPEN:edge -> DONE\n";
-    ss << "  'open settings'     -> OPEN:ms-settings: -> DONE\n";
-    ss << "  '\xE6\x89\x93\xE5\xBC\x80\xE8\xAE\xBE\xE7\xBD\xAE'      -> OPEN:ms-settings: -> DONE\n";
-    ss << "  'make folder abc'   -> CREATEFOLDER:abc\n";
-    ss << "  'make txt note'     -> CREATEFILE:txt;;;note;;;hello world\n";
-    ss << "  'make excel report' -> CREATEEXCEL:report;;;Name|Age;;;Alice|30\n";
-    ss << "  'make word note'    -> CREATEWORD:note;;;Hello world\n";
-    ss << "  'auto shutdown bat' -> CREATEFILE:bat;;;auto_shutdown;;;shutdown /s /t 60\n";
-    ss << "  'what is python'    -> CHAT:Python is a programming language...\n";
-    ss << "  '\xE4\xBB\x80\xE4\xB9\x88\xE6\x98\xAFpython'        -> CHAT:Python \xE6\x98\xAF\xE4\xB8\x80\xE7\xA7\x8D\xE7\xBC\x96\xE7\xA8\x8B\xE8\xAF\xAD\xE8\xA8\x80...\n";
+    ss << "  'open browser'       -> OPEN:edge -> DONE\n";
+    ss << "  'open settings'      -> OPEN:ms-settings: -> DONE\n";
+    ss << "  'make folder abc'    -> CREATEFOLDER:abc\n";
+    ss << "  'make txt note'      -> CREATEFILE:txt;;;note;;;hello world\n";
+    ss << "  'make excel report'  -> CREATEEXCEL:report;;;Name|Age;;;Alice|30\n";
+    ss << "  'modify test.txt'    -> LISTFILE:txt -> EDITFILE:C:\\...\\test.txt;;;new content\n";
+    ss << "\n";
+    ss << "  Writing task example 1:\n";
+    ss << "  User: '写一篇600字作文，主题成长'\n";
+    ss << "  You should reply (about 200 chars per step, split into 3 steps):\n";
+    ss << "    Step 1: CREATEWORD:growth_essay;;;成长，是一场漫长而美丽的旅程。每个人都在成长的道路上经历着属于自己的故事。有人在挫折中学会了坚强，有人在失去中懂得了珍惜，而我在失败与成功之间，渐渐找到了自己的方向。\n";
+    ss << "    Step 2: APPENDWORD:C:\\Users\\Administrator\\Desktop\\growth_essay.docx;;;小时候的我，总是害怕犯错。一次考试失利就能让我哭上半天，一句批评就能让我怀疑自己。可是后来我明白了，失败并不是终点，而是通往成功的必经之路。每一次跌倒，都让我学会了如何站得更稳。\n";
+    ss << "    Step 3: APPENDWORD:C:\\Users\\Administrator\\Desktop\\growth_essay.docx;;;如今的我不再畏惧挑战。我知道成长不仅仅是年龄的增长，更是心智的成熟。它教会我勇敢、坚韧与包容。成长没有终点，只有不断前行的旅程。\n";
+    ss << "    Step 4: DONE\n";
+    ss << "\n";
+    ss << "  Writing task example 2:\n";
+    ss << "  User: '写一封给老师的感谢信'\n";
+    ss << "  You should reply:\n";
+    ss << "    CREATEWORD:thank_you_letter;;;尊敬的李老师：;;;您好！感谢您这几年来的辛勤教导。您不仅教会了我知识，更教会了我如何做人。;;;每当我遇到困难时，您总是耐心地鼓励我；每当我取得进步时，您的笑容是我最大的动力。;;;如今我即将毕业，心中满怀不舍与感激。愿您身体健康，桃李满天下！;;;此致 敬礼;;;您的学生 张三\n";
+    ss << "\n";
+    ss << "  'what is python'     -> CHAT:Python is a programming language...\n";
     ss << "=== END REFERENCE ===\n\n";
     return ss.str();
 }
